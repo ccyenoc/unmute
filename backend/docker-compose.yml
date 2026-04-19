@@ -1,0 +1,30 @@
+version: '3.8'
+
+services:
+  backend:
+    build: .
+    container_name: sign-language-backend
+    ports:
+      - "8000:8000"
+    environment:
+      - DEBUG=True
+      - PORT=8000
+      - ENV=development
+    volumes:
+      - ./data:/app/data
+      - ./models:/app/models
+    restart: unless-stopped
+
+  # Optional: PostgreSQL for storing predictions if you want to scale
+  # db:
+  #   image: postgres:15
+  #   container_name: sign-language-db
+  #   environment:
+  #     POSTGRES_PASSWORD: password
+  #   volumes:
+  #     - postgres_data:/var/lib/postgresql/data
+  #   ports:
+  #     - "5432:5432"
+
+# volumes:
+#   postgres_data:

@@ -1,19 +1,19 @@
-import React, { useState } from 'react';
+import { Colors } from '@/constants/theme';
+import { useColorScheme } from '@/hooks/use-color-scheme';
+import { useState } from 'react';
 import {
-  StyleSheet,
-  View,
+  Alert,
   SafeAreaView,
   ScrollView,
+  StyleSheet,
   Switch,
   Text,
   TouchableOpacity,
-  Alert,
+  View,
 } from 'react-native';
-import { Colors } from '@/frontend/constants/theme';
-import { useColorScheme } from '@/hooks/use-color-scheme';
 
 export default function SettingsScreen() {
-  const colorScheme = useColorScheme();
+  const colorScheme = useColorScheme() ?? 'light';
   const [enableSound, setEnableSound] = useState(true);
   const [enableVibration, setEnableVibration] = useState(true);
   const [enableAutoCapture, setEnableAutoCapture] = useState(false);
