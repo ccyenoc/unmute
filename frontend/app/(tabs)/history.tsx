@@ -1,18 +1,18 @@
+import { Colors } from '@/constants/theme';
+import { useColorScheme } from '@/hooks/use-color-scheme';
+import { clearHistory, getTranslationHistory } from '@/utils/translationService';
+import { useFocusEffect } from '@react-navigation/native';
 import React, { useState } from 'react';
 import {
-  StyleSheet,
-  View,
-  FlatList,
-  TouchableOpacity,
-  Text,
-  SafeAreaView,
-  Alert,
   ActivityIndicator,
+  Alert,
+  FlatList,
+  SafeAreaView,
+  StyleSheet,
+  Text,
+  TouchableOpacity,
+  View,
 } from 'react-native';
-import { Colors } from '@/frontend/constants/theme';
-import { useColorScheme } from '@/hooks/use-color-scheme';
-import { getTranslationHistory, clearHistory } from '@/frontend/utils/translationService';
-import { useFocusEffect } from '@react-navigation/native';
 
 interface TranslationRecord {
   id: string;
@@ -21,7 +21,7 @@ interface TranslationRecord {
 }
 
 export default function HistoryScreen() {
-  const colorScheme = useColorScheme();
+  const colorScheme = useColorScheme() ?? 'light';
   const [history, setHistory] = useState<TranslationRecord[]>([]);
   const [isLoading, setIsLoading] = useState(true);
 
