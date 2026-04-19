@@ -1,20 +1,20 @@
-import React, { useState, useRef } from 'react';
+import { Colors } from '@/constants/theme';
+import { useColorScheme } from '@/hooks/use-color-scheme';
+import { simulateSignTranslation, storeTranslation } from '@/utils/translationService';
+import { CameraView, useCameraPermissions } from 'expo-camera';
+import React, { useRef, useState } from 'react';
 import {
-  StyleSheet,
-  View,
-  TouchableOpacity,
-  Text,
   ActivityIndicator,
   Alert,
   SafeAreaView,
+  StyleSheet,
+  Text,
+  TouchableOpacity,
+  View,
 } from 'react-native';
-import { CameraView, useCameraPermissions } from 'expo-camera';
-import { Colors } from '@/frontend/constants/theme';
-import { useColorScheme } from '@/hooks/use-color-scheme';
-import { storeTranslation, simulateSignTranslation } from '@/frontend/utils/translationService';
 
 export default function TranslatorScreen() {
-  const colorScheme = useColorScheme();
+  const colorScheme = useColorScheme() ?? 'light';
   const [permission, requestPermission] = useCameraPermissions();
   const [isRecording, setIsRecording] = useState(false);
   const [translation, setTranslation] = useState<string | null>(null);
