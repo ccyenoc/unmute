@@ -43,8 +43,8 @@ EMOTIONS = EMOTION_LABELS
 USE_FEN = os.getenv("USE_FEN", "true").strip().lower() == "true"
 
 # Reduce "always neutral" bias from provider outputs when non-neutral signal is strong.
-NEUTRAL_OVERRIDE_MARGIN = float(os.getenv("NEUTRAL_OVERRIDE_MARGIN", "20.0"))
-NEUTRAL_OVERRIDE_MIN_SCORE = float(os.getenv("NEUTRAL_OVERRIDE_MIN_SCORE", "15.0"))
+NEUTRAL_OVERRIDE_MARGIN = float(os.getenv("NEUTRAL_OVERRIDE_MARGIN", "80.0"))
+NEUTRAL_OVERRIDE_MIN_SCORE = float(os.getenv("NEUTRAL_OVERRIDE_MIN_SCORE", "2.0"))
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 EMOTION_DATASET_DIR = BASE_DIR / "data" / "emotion_dataset"

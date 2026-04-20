@@ -152,20 +152,16 @@ function resolveDefaultBackendBaseUrl(): string {
     return normalizeBackendUrl(envUrl);
   }
 
-  const extraUrl = Constants.expoConfig?.extra?.backendUrl;
-  if (typeof extraUrl === 'string' && extraUrl.trim().length > 0) {
-    return normalizeBackendUrl(extraUrl);
-  }
-
-  if (DEFAULT_BACKEND_URL.length > 0) {
-    return DEFAULT_BACKEND_URL;
-  }
-
   const hostUri = Constants.expoConfig?.hostUri;
   const host = hostUri?.split(':')[0];
 
   if (host && isUsableHost(host)) {
     return `http://${host}:8000`;
+  }
+
+  const extraUrl = Constants.expoConfig?.extra?.backendUrl;
+  if (typeof extraUrl === 'string' && extraUrl.trim().length > 0) {
+    return normalizeBackendUrl(extraUrl);
   }
 
   return DEFAULT_BACKEND_URL;
