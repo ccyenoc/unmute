@@ -40,7 +40,7 @@ except Exception:  # pragma: no cover - optional dependency
         FER = None
 
 EMOTIONS = EMOTION_LABELS
-USE_FEN = os.getenv("USE_FEN", "false").strip().lower() == "true"
+USE_FEN = os.getenv("USE_FEN", "true").strip().lower() == "true"
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 EMOTION_DATASET_DIR = BASE_DIR / "data" / "emotion_dataset"
@@ -307,18 +307,24 @@ def predict_emotion_pipeline(image_bytes: bytes) -> Dict[str, Any]:
 
     if face_region is None:
         return {
+            "success": True,
             "emotion": "neutral",
             "confidence": 0.0,
             "face_detected": False,
+            "provider": None,
+            "scores": _normalize_emotion_scores({}),
         }
 
     x, y, w, h = face_region["x"], face_region["y"], face_region["w"], face_region["h"]
     face_crop = image_bgr[y : y + h, x : x + w]
     if face_crop.size == 0:
         return {
+            "success": True,
             "emotion": "neutral",
             "confidence": 0.0,
             "face_detected": False,
+            "provider": None,
+            "scores": _normalize_emotion_scores({}),
         }
 
     # Preprocessing step required by the pipeline contract.
@@ -331,10 +337,15 @@ def predict_emotion_pipeline(image_bytes: bytes) -> Dict[str, Any]:
             confidence = float(fen_result.get("confidence", 0.0))
             if confidence > 1.0:
                 confidence = confidence / 100.0
+            confidence_percent = round(max(0.0, min(1.0, confidence)) * 100.0, 4)
+            scores = _normalize_emotion_percentages(fen_result.get("scores", {}))
             return {
+                "success": True,
                 "emotion": str(fen_result.get("emotion", "neutral")),
-                "confidence": round(max(0.0, min(1.0, confidence)), 4),
+                "confidence": confidence_percent,
                 "face_detected": bool(fen_result.get("face_detected", True)),
+                "provider": "fen",
+                "scores": scores,
             }
 
     # Option A: pretrained FER model fallback on the face crop.
@@ -349,10 +360,14 @@ def predict_emotion_pipeline(image_bytes: bytes) -> Dict[str, Any]:
                 confidence = float(scores.get(emotion, 0.0))
                 if confidence > 1.0:
                     confidence = confidence / 100.0
+                normalized_scores = _normalize_emotion_percentages(scores)
                 return {
+                    "success": True,
                     "emotion": emotion,
-                    "confidence": round(max(0.0, min(1.0, confidence)), 4),
+                    "confidence": round(max(0.0, min(1.0, confidence)) * 100.0, 4),
                     "face_detected": True,
+                    "provider": "fer",
+                    "scores": normalized_scores,
                 }
 
     if DeepFace is not None:
@@ -368,10 +383,14 @@ def predict_emotion_pipeline(image_bytes: bytes) -> Dict[str, Any]:
         confidence = float(scores.get(emotion, 0.0))
         if confidence > 1.0:
             confidence = confidence / 100.0
+        normalized_scores = _normalize_emotion_percentages(scores)
         return {
+            "success": True,
             "emotion": emotion,
-            "confidence": round(max(0.0, min(1.0, confidence)), 4),
+            "confidence": round(max(0.0, min(1.0, confidence)) * 100.0, 4),
             "face_detected": True,
+            "provider": "deepface",
+            "scores": normalized_scores,
         }
 
     raise RuntimeError("No emotion model provider is available (FEN/FER/DeepFace)")

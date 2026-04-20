@@ -2,11 +2,15 @@
 Sign Language Translator - FastAPI Backend
 Main application entry point
 """
+import os
+
+# Keep TensorFlow startup noise out of the server logs.
+os.environ.setdefault("TF_CPP_MIN_LOG_LEVEL", "2")
+
+from dotenv import load_dotenv
 from fastapi import FastAPI, UploadFile, File, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
-import os
-from dotenv import load_dotenv
 
 # Import routers
 from routes.detection import router as detection_router

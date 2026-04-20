@@ -1,15 +1,16 @@
 import { Colors } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
-import { useState } from 'react';
+import { resolveBackendBaseUrl } from '@/utils/facialEmotionService';
+import { useEffect, useState } from 'react';
 import {
-  Alert,
-  SafeAreaView,
-  ScrollView,
-  StyleSheet,
-  Switch,
-  Text,
-  TouchableOpacity,
-  View,
+    Alert,
+    SafeAreaView,
+    ScrollView,
+    StyleSheet,
+    Switch,
+    Text,
+    TouchableOpacity,
+    View,
 } from 'react-native';
 
 export default function SettingsScreen() {
@@ -17,6 +18,51 @@ export default function SettingsScreen() {
   const [enableSound, setEnableSound] = useState(true);
   const [enableVibration, setEnableVibration] = useState(true);
   const [enableAutoCapture, setEnableAutoCapture] = useState(false);
+  const [backendStatus, setBackendStatus] = useState('Loading...');
+
+  const checkBackendConnection = async (url: string) => {
+    const normalizedUrl = url.trim().replace(/\/$/, '');
+    if (!normalizedUrl) {
+      setBackendStatus('Disconnected');
+      return;
+    }
+
+    setBackendStatus('Checking...');
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 5000);
+
+    try {
+      const response = await fetch(`${normalizedUrl}/api/facial-emotion/health`, {
+        signal: controller.signal,
+      });
+      setBackendStatus(response.ok ? 'Connected' : 'Disconnected');
+    } catch {
+      setBackendStatus('Disconnected');
+    } finally {
+      clearTimeout(timeout);
+    }
+  };
+
+  useEffect(() => {
+    let mounted = true;
+
+    resolveBackendBaseUrl()
+      .then((url) => {
+        if (!mounted) {
+          return;
+        }
+        void checkBackendConnection(url);
+      })
+      .catch(() => {
+        if (mounted) {
+          setBackendStatus('Unavailable');
+        }
+      });
+
+    return () => {
+      mounted = false;
+    };
+  }, []);
 
   const handleAbout = () => {
     Alert.alert(
@@ -38,19 +84,10 @@ export default function SettingsScreen() {
     <SafeAreaView style={[styles.container, { backgroundColor: Colors[colorScheme].background }]}>
       <ScrollView style={styles.content} showsVerticalScrollIndicator={false}>
         <View style={styles.section}>
-          <Text style={[styles.sectionTitle, { color: Colors[colorScheme].text }]}>
-            Audio & Feedback
-          </Text>
+          <Text style={[styles.sectionTitle, { color: Colors[colorScheme].text }]}>Audio & Feedback</Text>
 
-          <View
-            style={[
-              styles.settingItem,
-              { borderColor: Colors[colorScheme].tabIconDefault },
-            ]}
-          >
-            <Text style={[styles.settingLabel, { color: Colors[colorScheme].text }]}>
-              Text-to-Speech
-            </Text>
+          <View style={[styles.settingItem, { borderColor: Colors[colorScheme].tabIconDefault }]}>
+            <Text style={[styles.settingLabel, { color: Colors[colorScheme].text }]}>Text-to-Speech</Text>
             <Switch
               value={enableSound}
               onValueChange={setEnableSound}
@@ -62,15 +99,8 @@ export default function SettingsScreen() {
             />
           </View>
 
-          <View
-            style={[
-              styles.settingItem,
-              { borderColor: Colors[colorScheme].tabIconDefault },
-            ]}
-          >
-            <Text style={[styles.settingLabel, { color: Colors[colorScheme].text }]}>
-              Vibration Feedback
-            </Text>
+          <View style={[styles.settingItem, { borderColor: Colors[colorScheme].tabIconDefault }]}>
+            <Text style={[styles.settingLabel, { color: Colors[colorScheme].text }]}>Vibration Feedback</Text>
             <Switch
               value={enableVibration}
               onValueChange={setEnableVibration}
@@ -84,19 +114,10 @@ export default function SettingsScreen() {
         </View>
 
         <View style={styles.section}>
-          <Text style={[styles.sectionTitle, { color: Colors[colorScheme].text }]}>
-            Recognition
-          </Text>
+          <Text style={[styles.sectionTitle, { color: Colors[colorScheme].text }]}>Recognition</Text>
 
-          <View
-            style={[
-              styles.settingItem,
-              { borderColor: Colors[colorScheme].tabIconDefault },
-            ]}
-          >
-            <Text style={[styles.settingLabel, { color: Colors[colorScheme].text }]}>
-              Auto-Capture
-            </Text>
+          <View style={[styles.settingItem, { borderColor: Colors[colorScheme].tabIconDefault }]}>
+            <Text style={[styles.settingLabel, { color: Colors[colorScheme].text }]}>Auto-Capture</Text>
             <Switch
               value={enableAutoCapture}
               onValueChange={setEnableAutoCapture}
@@ -116,40 +137,30 @@ export default function SettingsScreen() {
         </View>
 
         <View style={styles.section}>
-          <Text style={[styles.sectionTitle, { color: Colors[colorScheme].text }]}>
-            Language
-          </Text>
+          <Text style={[styles.sectionTitle, { color: Colors[colorScheme].text }]}>Backend Connection</Text>
+          <View style={[styles.backendBox, { borderColor: Colors[colorScheme].tabIconDefault }]}>
+            <Text style={[styles.backendHint, { color: Colors[colorScheme].tabIconDefault }]}>
+              Backend URL is configured in the app build. This screen only shows connection status.
+            </Text>
+            <Text style={[styles.backendStatus, { color: Colors[colorScheme].text }]}>Status: {backendStatus}</Text>
+          </View>
+        </View>
 
-          <TouchableOpacity
-            style={[
-              styles.settingButton,
-              { borderColor: Colors[colorScheme].tabIconDefault },
-            ]}
-          >
+        <View style={styles.section}>
+          <Text style={[styles.sectionTitle, { color: Colors[colorScheme].text }]}>Language</Text>
+
+          <TouchableOpacity style={[styles.settingButton, { borderColor: Colors[colorScheme].tabIconDefault }]}>
             <View>
-              <Text style={[styles.settingLabel, { color: Colors[colorScheme].text }]}>
-                Input Language
-              </Text>
-              <Text style={[styles.settingValue, { color: Colors[colorScheme].tabIconDefault }]}>
-                American Sign Language (ASL)
-              </Text>
+              <Text style={[styles.settingLabel, { color: Colors[colorScheme].text }]}>Input Language</Text>
+              <Text style={[styles.settingValue, { color: Colors[colorScheme].tabIconDefault }]}>American Sign Language (ASL)</Text>
             </View>
             <Text style={[styles.buttonArrow, { color: Colors[colorScheme].tint }]}>›</Text>
           </TouchableOpacity>
 
-          <TouchableOpacity
-            style={[
-              styles.settingButton,
-              { borderColor: Colors[colorScheme].tabIconDefault },
-            ]}
-          >
+          <TouchableOpacity style={[styles.settingButton, { borderColor: Colors[colorScheme].tabIconDefault }]}>
             <View>
-              <Text style={[styles.settingLabel, { color: Colors[colorScheme].text }]}>
-                Output Language
-              </Text>
-              <Text style={[styles.settingValue, { color: Colors[colorScheme].tabIconDefault }]}>
-                English
-              </Text>
+              <Text style={[styles.settingLabel, { color: Colors[colorScheme].text }]}>Output Language</Text>
+              <Text style={[styles.settingValue, { color: Colors[colorScheme].tabIconDefault }]}>English</Text>
             </View>
             <Text style={[styles.buttonArrow, { color: Colors[colorScheme].tint }]}>›</Text>
           </TouchableOpacity>
@@ -157,35 +168,23 @@ export default function SettingsScreen() {
 
         <View style={styles.section}>
           <TouchableOpacity
-            style={[
-              styles.settingButton,
-              { borderColor: Colors[colorScheme].tabIconDefault },
-            ]}
+            style={[styles.settingButton, { borderColor: Colors[colorScheme].tabIconDefault }]}
             onPress={handlePrivacy}
           >
-            <Text style={[styles.settingLabel, { color: Colors[colorScheme].text }]}>
-              Privacy Policy
-            </Text>
+            <Text style={[styles.settingLabel, { color: Colors[colorScheme].text }]}>Privacy Policy</Text>
             <Text style={[styles.buttonArrow, { color: Colors[colorScheme].tint }]}>›</Text>
           </TouchableOpacity>
 
           <TouchableOpacity
-            style={[
-              styles.settingButton,
-              { borderColor: Colors[colorScheme].tabIconDefault },
-            ]}
+            style={[styles.settingButton, { borderColor: Colors[colorScheme].tabIconDefault }]}
             onPress={handleAbout}
           >
-            <Text style={[styles.settingLabel, { color: Colors[colorScheme].text }]}>
-              About
-            </Text>
+            <Text style={[styles.settingLabel, { color: Colors[colorScheme].text }]}>About</Text>
             <Text style={[styles.buttonArrow, { color: Colors[colorScheme].tint }]}>›</Text>
           </TouchableOpacity>
         </View>
 
-        <Text style={[styles.versionText, { color: Colors[colorScheme].tabIconDefault }]}>
-          Version 1.0.0
-        </Text>
+        <Text style={[styles.versionText, { color: Colors[colorScheme].tabIconDefault }]}>Version 1.0.0</Text>
       </ScrollView>
     </SafeAreaView>
   );
@@ -241,6 +240,21 @@ const styles = StyleSheet.create({
   settingDescription: {
     paddingHorizontal: 12,
     paddingVertical: 8,
+  },
+  backendBox: {
+    borderWidth: 1,
+    borderRadius: 12,
+    padding: 12,
+  },
+  backendHint: {
+    fontSize: 12,
+    lineHeight: 18,
+    marginTop: 8,
+  },
+  backendStatus: {
+    marginTop: 10,
+    fontSize: 13,
+    fontWeight: '600',
   },
   descriptionText: {
     fontSize: 13,

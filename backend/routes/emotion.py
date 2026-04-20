@@ -5,6 +5,7 @@ Endpoints for analyzing emotion from uploaded images or base64 camera frames.
 
 from __future__ import annotations
 
+import base64
 import logging
 import json
 
@@ -39,6 +40,10 @@ class EmotionFrameRequest(BaseModel):
 
 class EmotionSnapshotRequest(BaseModel):
     image: str = Field(..., description="Base64-encoded image (matches mobile snapshot payload)")
+
+
+class EmotionSampleFrameRequest(BaseModel):
+    image_base64: str = Field(..., description="Base64-encoded image for sample collection")
 
 
 class EmotionPredictResponse(BaseModel):
@@ -97,13 +102,27 @@ def analyze_frame(payload: EmotionFrameRequest):
 
 @router.post("/emotion")
 def analyze_snapshot(payload: EmotionSnapshotRequest):
-    """Simple snapshot endpoint for demos.
+    """Snapshot endpoint for frontend camera payloads.
 
     Accepts payload: {"image": "<base64>"}
+    Uses MediaPipe-first pipeline with FEN/FER/DeepFace providers.
     """
     try:
         logger.warning("FACIAL_API request: image_base64_length=%s", len(payload.image or ""))
-        result = analyze_facial_emotion_from_base64(payload.image)
+        pipeline = predict_emotion_pipeline_from_base64(payload.image)
+        face_detected = bool(pipeline.get("face_detected", False))
+        result = {
+            "success": bool(pipeline.get("success", True)),
+            "face_detected": face_detected,
+            "faces_detected": 1 if face_detected else 0,
+            "provider": pipeline.get("provider"),
+            "emotion": str(pipeline.get("emotion", "neutral")),
+            "confidence": float(pipeline.get("confidence", 0.0)),
+            "scores": pipeline.get("scores", {}),
+            "results": [],
+        }
+        if not face_detected:
+            result["message"] = "No face detected"
         logger.warning(
             "FACIAL_API result: emotion=%s confidence=%s provider=%s face_detected=%s",
             result.get("emotion"),
@@ -165,6 +184,30 @@ async def collect_sample(
         raise HTTPException(status_code=400, detail="Uploaded file must be an image")
 
     image_bytes = await file.read()
+
+    try:
+        sample = save_emotion_sample(label=label, image_bytes=image_bytes)
+        dataset_info = get_emotion_dataset_info()
+        return {
+            "success": True,
+            "sample": sample,
+            "dataset": dataset_info,
+        }
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+
+@router.post("/collect-sample-frame")
+def collect_sample_frame(
+    payload: EmotionSampleFrameRequest,
+    label: str = Query(..., description="Emotion label (happy, angry, neutral, etc.)"),
+):
+    try:
+        image_base64 = payload.image_base64 or ""
+        image_payload = image_base64.split(",", 1)[-1]
+        image_bytes = base64.b64decode(image_payload)
+    except Exception as exc:
+        raise HTTPException(status_code=422, detail=f"Invalid base64 payload: {exc}") from exc
 
     try:
         sample = save_emotion_sample(label=label, image_bytes=image_bytes)

@@ -3,14 +3,20 @@ import { useColorScheme } from '@/hooks/use-color-scheme';
 import {
     analyzeEmotionFromBase64,
     checkFacialApiHealth,
+    collectEmotionSampleFromBase64,
     EmotionAnalysisResponse,
+    EmotionDatasetInfoResponse,
     FusionResponse,
-    getBackendBaseUrl,
+    getEmotionDatasetInfo,
+    getEmotionModelInfo,
+    getEmotionTrainingStatus,
     interpretFusion,
+    startEmotionTraining,
 } from '@/utils/facialEmotionService';
 import { simulateSignTranslation, storeTranslation } from '@/utils/translationService';
+import { useFocusEffect } from '@react-navigation/native';
 import { CameraView, useCameraPermissions } from 'expo-camera';
-import React, { useRef, useState } from 'react';
+import React, { useCallback, useRef, useState } from 'react';
 import {
     ActivityIndicator,
     Alert,
@@ -23,13 +29,18 @@ import {
 
 export default function TranslatorScreen() {
   const colorScheme = useColorScheme() ?? 'light';
-  const backendUrl = getBackendBaseUrl();
+  const actionButtonTextColor = colorScheme === 'light' ? '#11181C' : '#FFFFFF';
+  const [selectedEmotionLabel, setSelectedEmotionLabel] = useState<'happy' | 'angry' | 'neutral'>('neutral');
+  const [datasetInfo, setDatasetInfo] = useState<EmotionDatasetInfoResponse | null>(null);
+  const [fenReady, setFenReady] = useState(false);
+  const [trainingStatusText, setTrainingStatusText] = useState<string>('Idle');
   const [permission, requestPermission] = useCameraPermissions();
   const [isRecording, setIsRecording] = useState(false);
   const [translation, setTranslation] = useState<string | null>(null);
   const [emotionResult, setEmotionResult] = useState<EmotionAnalysisResponse | null>(null);
   const [fusionResult, setFusionResult] = useState<FusionResponse | null>(null);
   const [apiConnected, setApiConnected] = useState<boolean | null>(null);
+  const [backendStatusLabel, setBackendStatusLabel] = useState('Checking...');
   const [isProcessing, setIsProcessing] = useState(false);
   const cameraRef = useRef<CameraView>(null);
 
@@ -39,17 +50,78 @@ export default function TranslatorScreen() {
     }
   }, [permission, requestPermission]);
 
-  React.useEffect(() => {
-    let mounted = true;
-    checkFacialApiHealth().then((ok) => {
-      if (mounted) {
-        setApiConnected(ok);
-      }
-    });
-    return () => {
-      mounted = false;
-    };
-  }, []);
+  useFocusEffect(
+    useCallback(() => {
+      let mounted = true;
+
+      setBackendStatusLabel('Checking...');
+      setApiConnected(null);
+
+      checkFacialApiHealth()
+        .then((ok) => {
+          if (mounted) {
+            setApiConnected(ok);
+            setBackendStatusLabel(ok ? 'Connected' : 'Disconnected');
+          }
+        })
+        .catch(() => {
+          if (mounted) {
+            setApiConnected(false);
+            setBackendStatusLabel('Disconnected');
+          }
+        });
+
+      getEmotionDatasetInfo()
+        .then((dataset) => {
+          if (mounted) {
+            setDatasetInfo(dataset);
+          }
+        })
+        .catch(() => {
+          if (mounted) {
+            setDatasetInfo(null);
+          }
+        });
+
+      getEmotionModelInfo()
+        .then((modelInfo) => {
+          if (mounted) {
+            setFenReady(Boolean(modelInfo.fen_model?.ready));
+          }
+        })
+        .catch(() => {
+          if (mounted) {
+            setFenReady(false);
+          }
+        });
+
+      getEmotionTrainingStatus()
+        .then((status) => {
+          if (!mounted) {
+            return;
+          }
+          if (status.running) {
+            setTrainingStatusText('Running');
+            return;
+          }
+          const lastStatus = status.last_job?.status;
+          if (lastStatus) {
+            setTrainingStatusText(lastStatus);
+            return;
+          }
+          setTrainingStatusText('Idle');
+        })
+        .catch(() => {
+          if (mounted) {
+            setTrainingStatusText('Unavailable');
+          }
+        });
+
+      return () => {
+        mounted = false;
+      };
+    }, [])
+  );
 
   const handleStartTranslation = async () => {
     if (!permission?.granted) {
@@ -109,6 +181,52 @@ export default function TranslatorScreen() {
     }
   };
 
+  const handleCollectSample = async () => {
+    if (!permission?.granted) {
+      Alert.alert('Camera Permission', 'Camera permission is required to collect emotion samples.');
+      return;
+    }
+
+    if (!cameraRef.current) {
+      Alert.alert('Camera Error', 'Camera is not ready yet. Please try again.');
+      return;
+    }
+
+    setIsProcessing(true);
+    try {
+      const snapshot = await cameraRef.current.takePictureAsync({
+        base64: true,
+        quality: 0.6,
+        skipProcessing: true,
+      });
+
+      if (!snapshot.base64) {
+        throw new Error('No frame data captured');
+      }
+
+      const result = await collectEmotionSampleFromBase64(snapshot.base64, selectedEmotionLabel);
+      setDatasetInfo(result.dataset);
+      Alert.alert('Sample Collected', `Saved ${selectedEmotionLabel} sample successfully.`);
+    } catch {
+      Alert.alert('Collect Sample Failed', 'Could not collect sample. Make sure a face is visible.');
+    } finally {
+      setIsProcessing(false);
+    }
+  };
+
+  const handleTrainFen = async () => {
+    setIsProcessing(true);
+    try {
+      const started = await startEmotionTraining(30, 32);
+      setTrainingStatusText(started.job?.status || 'running');
+      Alert.alert('Training Started', 'FEN training job started in backend.');
+    } catch {
+      Alert.alert('Training Failed', 'Could not start training. Ensure dataset has at least 2 emotion classes.');
+    } finally {
+      setIsProcessing(false);
+    }
+  };
+
   const speakTranslation = async (text: string) => {
     try {
       // In a real app, you would use a text-to-speech service
@@ -118,6 +236,37 @@ export default function TranslatorScreen() {
     } catch {
       console.error('Speech error');
     }
+  };
+
+  const renderEmotionOutput = () => {
+    if (!emotionResult) {
+      return null;
+    }
+
+    return (
+      <View style={styles.emotionApiCard}>
+        <Text style={[styles.emotionApiTitle, { color: Colors[colorScheme].text }]}>Facial Expression API</Text>
+        <Text style={[styles.emotionApiText, { color: Colors[colorScheme].tabIconDefault }]}> 
+          {emotionResult.face_detected
+            ? `${emotionResult.emotion} (${emotionResult.confidence.toFixed(1)}%)`
+            : 'No face detected'}
+        </Text>
+        <Text style={[styles.emotionApiMeta, { color: Colors[colorScheme].tabIconDefault }]}> 
+          Provider: {emotionResult.provider ?? 'none'}
+        </Text>
+        <Text style={[styles.emotionApiMeta, { color: Colors[colorScheme].tabIconDefault }]}> 
+          Faces detected: {emotionResult.faces_detected}
+        </Text>
+        <Text style={[styles.emotionApiMeta, { color: Colors[colorScheme].tabIconDefault }]}> 
+          Scores: {JSON.stringify(emotionResult.scores)}
+        </Text>
+        {emotionResult.message ? (
+          <Text style={[styles.emotionApiMeta, { color: Colors[colorScheme].tabIconDefault }]}> 
+            Message: {emotionResult.message}
+          </Text>
+        ) : null}
+      </View>
+    );
   };
 
   if (!permission) {
@@ -133,7 +282,7 @@ export default function TranslatorScreen() {
       <SafeAreaView style={[styles.container, { backgroundColor: Colors[colorScheme].background }]}>
         <Text style={{ textAlign: 'center' }}>We need your permission to show the camera</Text>
         <TouchableOpacity style={styles.button} onPress={requestPermission}>
-          <Text style={styles.buttonText}>Grant Permission</Text>
+          <Text style={[styles.buttonText, { color: actionButtonTextColor }]}>Grant Permission</Text>
         </TouchableOpacity>
       </SafeAreaView>
     );
@@ -164,12 +313,65 @@ export default function TranslatorScreen() {
               { color: apiConnected ? '#22A06B' : apiConnected === false ? '#D92D20' : Colors[colorScheme].text },
             ]}
           >
-            {apiConnected === null ? 'Checking...' : apiConnected ? 'Connected' : 'Disconnected'}
+            {backendStatusLabel}
           </Text>
         </View>
-        <Text style={[styles.backendUrlText, { color: Colors[colorScheme].tabIconDefault }]} numberOfLines={1}>
-          {backendUrl}
-        </Text>
+
+        <View style={[styles.fenPanel, { borderColor: Colors[colorScheme].tabIconDefault }]}> 
+          <Text style={[styles.fenTitle, { color: Colors[colorScheme].text }]}>FEN Training Panel</Text>
+          <Text style={[styles.fenMeta, { color: Colors[colorScheme].tabIconDefault }]}> 
+            FEN Ready: {fenReady ? 'Yes' : 'No'}
+          </Text>
+          <Text style={[styles.fenMeta, { color: Colors[colorScheme].tabIconDefault }]}> 
+            Training Status: {trainingStatusText}
+          </Text>
+          <Text style={[styles.fenMeta, { color: Colors[colorScheme].tabIconDefault }]}> 
+            Total Samples: {datasetInfo?.total_images ?? 0}
+          </Text>
+
+          <View style={styles.labelRow}>
+            {(['happy', 'angry', 'neutral'] as const).map((label) => (
+              <TouchableOpacity
+                key={label}
+                style={[
+                  styles.labelChip,
+                  {
+                    borderColor: Colors[colorScheme].tabIconDefault,
+                    backgroundColor: selectedEmotionLabel === label ? Colors[colorScheme].tint : 'transparent',
+                  },
+                ]}
+                onPress={() => setSelectedEmotionLabel(label)}
+              >
+                <Text
+                  style={{
+                    color: selectedEmotionLabel === label ? actionButtonTextColor : Colors[colorScheme].text,
+                    fontWeight: '600',
+                    textTransform: 'capitalize',
+                  }}
+                >
+                  {label}
+                </Text>
+              </TouchableOpacity>
+            ))}
+          </View>
+
+          <View style={styles.fenActionRow}>
+            <TouchableOpacity
+              style={[styles.secondaryButton, { borderColor: Colors[colorScheme].tabIconDefault }]}
+              onPress={handleCollectSample}
+              disabled={isProcessing}
+            >
+              <Text style={[styles.secondaryButtonText, { color: Colors[colorScheme].text }]}>Collect Sample</Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={[styles.secondaryButton, { borderColor: Colors[colorScheme].tabIconDefault }]}
+              onPress={handleTrainFen}
+              disabled={isProcessing}
+            >
+              <Text style={[styles.secondaryButtonText, { color: Colors[colorScheme].text }]}>Train FEN</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
 
         {isProcessing ? (
           <View style={styles.processingContainer}>
@@ -201,6 +403,7 @@ export default function TranslatorScreen() {
                 )}
               </View>
             )}
+            {renderEmotionOutput()}
           </View>
         ) : (
           <Text style={[styles.instructionText, { color: Colors[colorScheme].tabIconDefault }]}>
@@ -219,7 +422,7 @@ export default function TranslatorScreen() {
           onPress={handleStartTranslation}
           disabled={isRecording || isProcessing}
         >
-          <Text style={styles.buttonText}>
+          <Text style={[styles.buttonText, { color: actionButtonTextColor }] }>
             {isRecording ? 'Recording...' : 'Start Translation'}
           </Text>
         </TouchableOpacity>
@@ -287,9 +490,48 @@ const styles = StyleSheet.create({
     fontSize: 13,
     fontWeight: '700',
   },
-  backendUrlText: {
-    fontSize: 11,
+  fenPanel: {
+    borderWidth: 1,
+    borderRadius: 10,
+    padding: 12,
     marginBottom: 12,
+  },
+  fenTitle: {
+    fontSize: 12,
+    fontWeight: '700',
+    textTransform: 'uppercase',
+    marginBottom: 6,
+  },
+  fenMeta: {
+    fontSize: 12,
+    marginTop: 2,
+  },
+  labelRow: {
+    flexDirection: 'row',
+    marginTop: 10,
+    gap: 8,
+  },
+  labelChip: {
+    borderWidth: 1,
+    borderRadius: 8,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+  },
+  fenActionRow: {
+    flexDirection: 'row',
+    marginTop: 10,
+    gap: 8,
+  },
+  secondaryButton: {
+    flex: 1,
+    borderWidth: 1,
+    borderRadius: 10,
+    alignItems: 'center',
+    paddingVertical: 10,
+  },
+  secondaryButtonText: {
+    fontSize: 13,
+    fontWeight: '600',
   },
   processingContainer: {
     alignItems: 'center',
@@ -325,6 +567,28 @@ const styles = StyleSheet.create({
     borderTopWidth: 1,
     borderTopColor: 'rgba(0, 122, 255, 0.2)',
   },
+  emotionApiCard: {
+    marginTop: 12,
+    padding: 12,
+    borderRadius: 10,
+    backgroundColor: 'rgba(0, 0, 0, 0.04)',
+  },
+  emotionApiTitle: {
+    fontSize: 12,
+    fontWeight: '700',
+    marginBottom: 6,
+    textTransform: 'uppercase',
+  },
+  emotionApiText: {
+    fontSize: 16,
+    fontWeight: '600',
+    marginBottom: 6,
+  },
+  emotionApiMeta: {
+    fontSize: 12,
+    lineHeight: 18,
+    marginTop: 2,
+  },
   emotionLabel: {
     fontSize: 12,
     fontWeight: '600',
@@ -351,14 +615,9 @@ const styles = StyleSheet.create({
     paddingHorizontal: 24,
     borderRadius: 12,
     alignItems: 'center',
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.1,
-    shadowRadius: 4,
-    elevation: 3,
+    boxShadow: '0px 2px 4px rgba(0, 0, 0, 0.1)',
   },
   buttonText: {
-    color: '#FFFFFF',
     fontSize: 16,
     fontWeight: '600',
   },
