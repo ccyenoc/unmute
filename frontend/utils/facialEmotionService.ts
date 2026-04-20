@@ -84,6 +84,7 @@ export interface EmotionModelInfoResponse {
 
 const BACKEND_URL_KEY = 'signlanguage_backend_url';
 const DEFAULT_BACKEND_URL = 'https://improved-space-chainsaw-97rxv5p9r4w2q76-8000.app.github.dev';
+const EMOTION_REQUEST_TIMEOUT_MS = 20000;
 
 function normalizeBackendUrl(value: string): string {
   return value.trim().replace(/\/+$/, '');
@@ -167,6 +168,115 @@ function resolveDefaultBackendBaseUrl(): string {
   return DEFAULT_BACKEND_URL;
 }
 
+function collectBackendBaseUrlCandidates(): string[] {
+  const candidates: string[] = [];
+
+  const webDerivedUrl = deriveBackendFromWebHost();
+  if (webDerivedUrl) {
+    candidates.push(normalizeBackendUrl(webDerivedUrl));
+  }
+
+  const envUrl = process.env.EXPO_PUBLIC_BACKEND_URL;
+  if (envUrl && envUrl.trim().length > 0) {
+    candidates.push(normalizeBackendUrl(envUrl));
+  }
+
+  const hostUri = Constants.expoConfig?.hostUri;
+  const host = hostUri?.split(':')[0];
+  if (host && isUsableHost(host)) {
+    candidates.push(`http://${host}:8000`);
+  }
+
+  const extraUrl = Constants.expoConfig?.extra?.backendUrl;
+  if (typeof extraUrl === 'string' && extraUrl.trim().length > 0) {
+    candidates.push(normalizeBackendUrl(extraUrl));
+  }
+
+  candidates.push(DEFAULT_BACKEND_URL);
+
+  return Array.from(new Set(candidates));
+}
+
+async function getBackendBaseUrlCandidates(): Promise<string[]> {
+  const candidates: string[] = [];
+  const storedUrl = await getStoredBackendBaseUrl();
+  if (storedUrl) {
+    candidates.push(storedUrl);
+  }
+
+  candidates.push(...collectBackendBaseUrlCandidates());
+  return Array.from(new Set(candidates));
+}
+
+async function fetchWithTimeout(
+  url: string,
+  init: RequestInit,
+  timeoutMs: number,
+): Promise<Response> {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    return await fetch(url, { ...init, signal: controller.signal });
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
+function toNumber(value: unknown, fallback = 0): number {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : fallback;
+}
+
+function normalizeScores(rawScores: unknown, emotion: string, confidence: number): EmotionScores {
+  const base: EmotionScores = {
+    angry: 0,
+    disgust: 0,
+    fear: 0,
+    happy: 0,
+    neutral: 0,
+    sad: 0,
+    surprise: 0,
+  };
+
+  if (!rawScores || typeof rawScores !== 'object') {
+    if (emotion in base) {
+      base[emotion as keyof EmotionScores] = confidence;
+    }
+    return base;
+  }
+
+  const scoreMap = rawScores as Record<string, unknown>;
+  return {
+    angry: toNumber(scoreMap.angry, 0),
+    disgust: toNumber(scoreMap.disgust, 0),
+    fear: toNumber(scoreMap.fear, 0),
+    happy: toNumber(scoreMap.happy, 0),
+    neutral: toNumber(scoreMap.neutral, 0),
+    sad: toNumber(scoreMap.sad, 0),
+    surprise: toNumber(scoreMap.surprise, 0),
+  };
+}
+
+function normalizeEmotionResponse(payload: unknown): EmotionAnalysisResponse {
+  const record = (payload && typeof payload === 'object') ? (payload as Record<string, unknown>) : {};
+  const emotion = String(record.emotion ?? 'neutral');
+  const confidence = toNumber(record.confidence, 0);
+  const hasFaceDetectedFlag = typeof record.face_detected !== 'undefined';
+  const faceDetected = hasFaceDetectedFlag ? Boolean(record.face_detected) : true;
+  const facesDetected = toNumber(record.faces_detected, faceDetected ? 1 : 0);
+
+  return {
+    success: typeof record.success === 'boolean' ? record.success : true,
+    face_detected: faceDetected,
+    faces_detected: facesDetected,
+    provider: record.provider == null ? 'unknown' : String(record.provider),
+    emotion,
+    confidence,
+    scores: normalizeScores(record.scores, emotion, confidence),
+    message: typeof record.message === 'string' ? record.message : undefined,
+  };
+}
+
 export async function resolveBackendBaseUrl(): Promise<string> {
   const storedUrl = await getStoredBackendBaseUrl();
   return storedUrl ?? resolveDefaultBackendBaseUrl();
@@ -185,20 +295,21 @@ export async function clearBackendBaseUrl(): Promise<void> {
 }
 
 export async function checkFacialApiHealth(): Promise<boolean> {
-  const baseUrl = await resolveBackendBaseUrl();
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), 5000);
+  const candidates = await getBackendBaseUrlCandidates();
 
-  try {
-    const response = await fetch(`${baseUrl}/api/facial-emotion/health`, {
-      signal: controller.signal,
-    });
-    return response.ok;
-  } catch {
-    return false;
-  } finally {
-    clearTimeout(timeout);
+  for (const baseUrl of candidates) {
+    try {
+      const response = await fetchWithTimeout(`${baseUrl}/api/facial-emotion/health`, {}, 4000);
+      if (response.ok) {
+        await saveBackendBaseUrl(baseUrl);
+        return true;
+      }
+    } catch {
+      // Try next candidate URL.
+    }
   }
+
+  return false;
 }
 
 export async function analyzeEmotionFromBase64(imageBase64: string): Promise<EmotionAnalysisResponse> {
@@ -206,29 +317,46 @@ export async function analyzeEmotionFromBase64(imageBase64: string): Promise<Emo
 }
 
 export async function analyzeEmotionFromSnapshot(imageBase64: string): Promise<EmotionAnalysisResponse> {
-  const baseUrl = await resolveBackendBaseUrl();
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), 10000);
+  const candidates = await getBackendBaseUrlCandidates();
+  let lastError: Error | null = null;
 
-  try {
-    const response = await fetch(`${baseUrl}/api/facial-emotion/emotion`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({ image: imageBase64 }),
-      signal: controller.signal,
-    });
+  for (const baseUrl of candidates) {
+    try {
+      const attempts: { endpoint: string; body: Record<string, string> }[] = [
+        { endpoint: '/api/facial-emotion/emotion', body: { image: imageBase64 } },
+        { endpoint: '/api/facial-emotion/analyze-frame', body: { image_base64: imageBase64 } },
+        { endpoint: '/api/emotion/predict', body: { image: imageBase64 } },
+      ];
 
-    if (!response.ok) {
-      const errorText = await response.text();
-      throw new Error(errorText || `Emotion API request failed (${response.status})`);
+      for (const attempt of attempts) {
+        const response = await fetchWithTimeout(
+          `${baseUrl}${attempt.endpoint}`,
+          {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+            },
+            body: JSON.stringify(attempt.body),
+          },
+          EMOTION_REQUEST_TIMEOUT_MS,
+        );
+
+        if (!response.ok) {
+          const errorText = await response.text();
+          lastError = new Error(errorText || `Emotion endpoint failed (${response.status})`);
+          continue;
+        }
+
+        const payload = await response.json();
+        await saveBackendBaseUrl(baseUrl);
+        return normalizeEmotionResponse(payload);
+      }
+    } catch (error) {
+      lastError = error instanceof Error ? error : new Error('Emotion API request failed');
     }
-
-    return (await response.json()) as EmotionAnalysisResponse;
-  } finally {
-    clearTimeout(timeout);
   }
+
+  throw lastError ?? new Error('Emotion API request failed');
 }
 
 export async function interpretFusion(sign: string, emotion: string, confidence?: number): Promise<FusionResponse> {
