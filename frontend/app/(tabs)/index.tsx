@@ -28,9 +28,14 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 export default function TranslatorScreen() {
   const colorScheme = useColorScheme() ?? 'light';
   const actionButtonTextColor = '#11181C';
-  const [overlayScale, setOverlayScale] = useState(1);
-  const [overlayPosition, setOverlayPosition] = useState({ x: 12, y: 60 });
-  const dragStartRef = useRef({ x: 12, y: 60 });
+  const defaultOverlayScale = 0.82;
+  const defaultOverlayWidth = 220;
+  const defaultOverlayHeight = 300;
+  const { width: initialScreenWidth } = Dimensions.get('window');
+  const initialOverlayX = Math.max(8, initialScreenWidth - defaultOverlayWidth * defaultOverlayScale - 10);
+  const [overlayScale, setOverlayScale] = useState(defaultOverlayScale);
+  const [overlayPosition, setOverlayPosition] = useState({ x: initialOverlayX, y: 64 });
+  const dragStartRef = useRef({ x: initialOverlayX, y: 64 });
   const touchStartRef = useRef({ x: 0, y: 0 });
   const pinchStartDistanceRef = useRef<number | null>(null);
   const pinchStartScaleRef = useRef(1);
@@ -53,13 +58,13 @@ export default function TranslatorScreen() {
 
   const getOverlayBounds = (scale: number) => {
     const { width: screenWidth, height: screenHeight } = Dimensions.get('window');
-    const scaledWidth = 240 * scale;
-    const scaledHeight = 320 * scale;
+    const scaledWidth = defaultOverlayWidth * scale;
+    const scaledHeight = defaultOverlayHeight * scale;
     return {
-      minX: -scaledWidth * 0.75,
-      maxX: Math.max(8, screenWidth - scaledWidth * 0.25),
-      minY: -scaledHeight * 0.45,
-      maxY: Math.max(52, screenHeight - scaledHeight * 0.15),
+      minX: 8,
+      maxX: Math.max(8, screenWidth - scaledWidth - 8),
+      minY: 12,
+      maxY: Math.max(52, screenHeight - scaledHeight - 64),
     };
   };
 
@@ -213,7 +218,7 @@ export default function TranslatorScreen() {
       await new Promise((resolve) => setTimeout(resolve, 120));
       const snapshot = await cameraRef.current.takePictureAsync({
         base64: true,
-        quality: 0.35,
+        quality: 0.5,
         skipProcessing: true,
       });
 
@@ -282,7 +287,7 @@ export default function TranslatorScreen() {
   };
 
   const renderEmotionOverlay = () => {
-    if (!isRecording && !emotionResult && !emotionErrorMessage) {
+    if (isRecording || !emotionResult) {
       return null;
     }
 
@@ -290,31 +295,14 @@ export default function TranslatorScreen() {
       ? (emotionResult.confidence > 1 ? emotionResult.confidence / 100 : emotionResult.confidence)
       : 0;
 
-    const payload = emotionResult
-      ? {
-          emotion: emotionResult.emotion,
-          confidence: Number(confidenceNormalized.toFixed(3)),
-          provider: emotionResult.provider,
-          faces_detected: emotionResult.faces_detected,
-          fusion_status: fusionResult?.status ?? 'aligned',
-          scores: emotionResult.scores,
-        }
-      : {
-          emotion: 'reading_fen_model',
-          confidence: 0,
-          provider: 'fen',
-          faces_detected: 0,
-          fusion_status: 'aligned',
-          scores: {
-            angry: 0,
-            disgust: 0,
-            fear: 0,
-            happy: 0,
-            neutral: 0,
-            sad: 0,
-            surprise: 0,
-          },
-        };
+    const payload = {
+      emotion: emotionResult.emotion,
+      confidence: Number(confidenceNormalized.toFixed(3)),
+      provider: emotionResult.provider,
+      faces_detected: emotionResult.faces_detected,
+      fusion_status: fusionResult?.status ?? 'aligned',
+      scores: emotionResult.scores,
+    };
 
     return (
       <View
@@ -353,11 +341,7 @@ export default function TranslatorScreen() {
           </View>
         </View>
 
-        {isRecording && !emotionResult ? (
-          <View style={styles.emotionNoticeBox}>
-            <Text style={styles.emotionNoticeText}>Fetching data from the trained FEN model...</Text>
-          </View>
-        ) : emotionResult?.message ? (
+        {emotionResult?.message ? (
           <View style={styles.emotionNoticeBox}>
             <Text style={styles.emotionNoticeText}>{emotionResult.message}</Text>
           </View>
@@ -541,8 +525,8 @@ const styles = StyleSheet.create({
   },
   emotionOverlayCard: {
     position: 'absolute',
-    width: 260,
-    maxHeight: 360,
+    width: 220,
+    maxHeight: 300,
     backgroundColor: 'rgba(14, 18, 24, 0.9)',
     borderRadius: 14,
     borderWidth: 1,

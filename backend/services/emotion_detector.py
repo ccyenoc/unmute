@@ -34,6 +34,11 @@ FEAR_SCORE_DAMPING = float(os.getenv("FEN_FEAR_SCORE_DAMPING", "0.82"))
 FEAR_OVERRIDE_MARGIN = float(os.getenv("FEN_FEAR_OVERRIDE_MARGIN", "12.0"))
 FEAR_OVERRIDE_MIN_SCORE = float(os.getenv("FEN_FEAR_OVERRIDE_MIN_SCORE", "15.0"))
 FEN_USE_ARGMAX_LABEL = os.getenv("FEN_USE_ARGMAX_LABEL", "true").strip().lower() == "true"
+FEN_USE_TTA = os.getenv("FEN_USE_TTA", "true").strip().lower() == "true"
+FEN_SMILE_CALIBRATION = os.getenv("FEN_SMILE_CALIBRATION", "true").strip().lower() == "true"
+FEN_SMILE_TRIGGER_MIN = float(os.getenv("FEN_SMILE_TRIGGER_MIN", "65.0"))
+FEN_BASE_HAPPY_MIN = float(os.getenv("FEN_BASE_HAPPY_MIN", "18.0"))
+FEN_HAPPY_PROMOTE_MARGIN = float(os.getenv("FEN_HAPPY_PROMOTE_MARGIN", "12.0"))
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 DATASET_DIR = BASE_DIR / "data" / "emotion_dataset"
@@ -249,6 +254,21 @@ def _select_emotion_from_scores(scores: Dict[str, float], fallback: str = "neutr
     return "neutral"
 
 
+def _predict_probs_with_tta(model: Any, image_bgr: np.ndarray, input_shape: Tuple[Any, ...]) -> np.ndarray:
+    """Predict probabilities with a light TTA pass to stabilize facial emotion output."""
+    base_input = _prepare_image_model_input(image_bgr, input_shape)
+    base_probs = model.predict(base_input, verbose=0)[0]
+
+    if not FEN_USE_TTA:
+        return base_probs
+
+    flipped = cv2.flip(image_bgr, 1)
+    flip_input = _prepare_image_model_input(flipped, input_shape)
+    flip_probs = model.predict(flip_input, verbose=0)[0]
+
+    return (base_probs + flip_probs) / 2.0
+
+
 @lru_cache(maxsize=1)
 def _load_model_artifacts() -> Optional[Dict[str, Any]]:
     model_path = _resolve_existing_model_path()
@@ -355,6 +375,45 @@ def extract_face_features(image_bgr: np.ndarray) -> Optional[np.ndarray]:
         feat.extend([point.x, point.y, point.z])
 
     return np.array(feat, dtype=np.float32)
+
+
+def _estimate_smile_score(image_bgr: np.ndarray) -> float:
+    """Estimate smile likelihood from face landmarks, returned as 0-100."""
+    image_rgb = cv2.cvtColor(image_bgr, cv2.COLOR_BGR2RGB)
+
+    with mp_face_mesh.FaceMesh(
+        static_image_mode=True,
+        max_num_faces=1,
+        refine_landmarks=False,
+        min_detection_confidence=0.5,
+    ) as face_mesh:
+        result = face_mesh.process(image_rgb)
+
+    if not result.multi_face_landmarks:
+        return 0.0
+
+    landmarks = result.multi_face_landmarks[0].landmark
+    left_mouth = landmarks[61]
+    right_mouth = landmarks[291]
+    upper_lip = landmarks[13]
+    lower_lip = landmarks[14]
+    left_eye = landmarks[33]
+    right_eye = landmarks[263]
+
+    mouth_width = float(np.hypot(right_mouth.x - left_mouth.x, right_mouth.y - left_mouth.y))
+    mouth_open = float(np.hypot(lower_lip.x - upper_lip.x, lower_lip.y - upper_lip.y))
+    eye_width = float(np.hypot(right_eye.x - left_eye.x, right_eye.y - left_eye.y))
+    if eye_width <= 1e-6:
+        return 0.0
+
+    smile_ratio = mouth_width / eye_width
+    openness_ratio = mouth_open / eye_width
+
+    # Wide smile mouth with controlled openness suggests happy over sad/fear.
+    width_score = np.clip((smile_ratio - 0.35) / 0.25, 0.0, 1.0)
+    openness_penalty = np.clip((openness_ratio - 0.18) / 0.22, 0.0, 1.0)
+    smile_score = width_score * (1.0 - 0.55 * openness_penalty)
+    return round(float(np.clip(smile_score, 0.0, 1.0) * 100.0), 4)
 
 
 def save_emotion_sample(label: str, image_bytes: bytes) -> Dict[str, Any]:
@@ -543,6 +602,7 @@ def predict_with_fen(image_bytes: bytes) -> Optional[Dict[str, Any]]:
     model = artifacts["model"]
     labels = list(artifacts["labels"])
     input_mode = artifacts["input_mode"]
+    smile_score = 0.0
 
     image_bgr = decode_image_bytes(image_bytes)
     face_region = _detect_face_region_mediapipe(image_bgr)
@@ -567,20 +627,40 @@ def predict_with_fen(image_bytes: bytes) -> Optional[Dict[str, Any]]:
 
         model_input = np.expand_dims(feat, axis=0)
         face_detected = True
+        probs = model.predict(model_input, verbose=0)[0]
     else:
         input_shape = tuple(model.input_shape or ())
-        model_input = _prepare_image_model_input(image_bgr, input_shape)
         face_detected = True
-
-    probs = model.predict(model_input, verbose=0)[0]
+        probs = _predict_probs_with_tta(model, image_bgr, input_shape)
     best_idx = int(np.argmax(probs))
     scores = {label: 0.0 for label in EMOTION_LABELS}
     for idx, label in enumerate(labels):
         if idx < len(probs) and label in scores:
             scores[label] = round(float(probs[idx] * 100.0), 4)
 
+    if input_mode == "image" and FEN_SMILE_CALIBRATION:
+        smile_score = _estimate_smile_score(image_bgr)
+        raw_happy = float(scores.get("happy", 0.0))
+        raw_top_score = float(max(scores.values())) if scores else 0.0
+        should_promote_happy = (
+            smile_score >= FEN_SMILE_TRIGGER_MIN
+            and raw_happy >= FEN_BASE_HAPPY_MIN
+            and (raw_top_score - raw_happy) <= FEN_HAPPY_PROMOTE_MARGIN
+        )
+
+        if should_promote_happy:
+            scores["happy"] = round(max(raw_happy, smile_score), 4)
+            scores["sad"] = round(float(scores.get("sad", 0.0)) * 0.82, 4)
+            scores["fear"] = round(float(scores.get("fear", 0.0)) * 0.88, 4)
+            scores["neutral"] = round(float(scores.get("neutral", 0.0)) * 0.95, 4)
+
     model_emotion = labels[best_idx] if best_idx < len(labels) else "neutral"
-    emotion = model_emotion if FEN_USE_ARGMAX_LABEL else _select_emotion_from_scores(scores, fallback=model_emotion)
+    emotion = max(scores, key=scores.get) if scores else model_emotion
+    if input_mode == "image" and smile_score >= FEN_SMILE_TRIGGER_MIN:
+        adjusted_best = max(scores, key=scores.get)
+        if adjusted_best == "happy":
+            emotion = "happy"
+
     confidence = float(scores.get(emotion, probs[best_idx] * 100.0))
 
     return {
@@ -589,6 +669,7 @@ def predict_with_fen(image_bytes: bytes) -> Optional[Dict[str, Any]]:
         "faces_detected": 1,
         "emotion": emotion,
         "model_emotion": model_emotion,
+        "smile_score": smile_score,
         "confidence": round(max(0.0, min(100.0, confidence)), 4),
         "scores": scores,
         "provider": "fen",
