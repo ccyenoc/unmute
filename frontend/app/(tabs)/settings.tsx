@@ -4,7 +4,6 @@ import { resolveBackendBaseUrl } from '@/utils/facialEmotionService';
 import { useEffect, useState } from 'react';
 import {
     Alert,
-    SafeAreaView,
     ScrollView,
     StyleSheet,
     Switch,
@@ -12,6 +11,7 @@ import {
     TouchableOpacity,
     View,
 } from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
 
 export default function SettingsScreen() {
   const colorScheme = useColorScheme() ?? 'light';
@@ -32,10 +32,17 @@ export default function SettingsScreen() {
     const timeout = setTimeout(() => controller.abort(), 5000);
 
     try {
-      const response = await fetch(`${normalizedUrl}/api/facial-emotion/health`, {
-        signal: controller.signal,
-      });
-      setBackendStatus(response.ok ? 'Connected' : 'Disconnected');
+      const endpoints = ['/api/facial-emotion/health', '/health'];
+      for (const endpoint of endpoints) {
+        const response = await fetch(`${normalizedUrl}${endpoint}`, {
+          signal: controller.signal,
+        });
+        if (response.ok) {
+          setBackendStatus('Connected');
+          return;
+        }
+      }
+      setBackendStatus('Disconnected');
     } catch {
       setBackendStatus('Disconnected');
     } finally {

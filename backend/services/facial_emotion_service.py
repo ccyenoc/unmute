@@ -43,9 +43,10 @@ EMOTIONS = EMOTION_LABELS
 USE_FEN = os.getenv("USE_FEN", "true").strip().lower() == "true"
 
 # Reduce "always neutral" bias from provider outputs when non-neutral signal is strong.
-NEUTRAL_OVERRIDE_MARGIN = float(os.getenv("NEUTRAL_OVERRIDE_MARGIN", "80.0"))
-NEUTRAL_OVERRIDE_MIN_SCORE = float(os.getenv("NEUTRAL_OVERRIDE_MIN_SCORE", "2.0"))
-FEN_MIN_CONFIDENCE_PERCENT = float(os.getenv("FEN_MIN_CONFIDENCE_PERCENT", "65.0"))
+NEUTRAL_OVERRIDE_MARGIN = float(os.getenv("NEUTRAL_OVERRIDE_MARGIN", "45.0"))
+NEUTRAL_OVERRIDE_MIN_SCORE = float(os.getenv("NEUTRAL_OVERRIDE_MIN_SCORE", "1.0"))
+FEN_MIN_CONFIDENCE_PERCENT = float(os.getenv("FEN_MIN_CONFIDENCE_PERCENT", "35.0"))
+FEN_STRICT_MODE = os.getenv("FEN_STRICT_MODE", "false").strip().lower() == "true"
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 EMOTION_DATASET_DIR = BASE_DIR / "data" / "emotion_dataset"
@@ -149,12 +150,23 @@ def _normalize_emotion_scores(scores: Dict[str, Any]) -> Dict[str, float]:
 
 
 def _normalize_emotion_percentages(scores: Dict[str, Any]) -> Dict[str, float]:
+    numeric_values: List[float] = []
+    for emotion in EMOTIONS:
+        raw_value = scores.get(emotion, 0.0)
+        try:
+            numeric_values.append(float(raw_value))
+        except (TypeError, ValueError):
+            numeric_values.append(0.0)
+
+    # If all scores are in [0, 1], treat them as probabilities and convert once.
+    is_probability_scale = bool(numeric_values) and max(numeric_values) <= 1.0
+
     normalized: Dict[str, float] = {}
     for emotion in EMOTIONS:
         raw_value = scores.get(emotion, 0.0)
         try:
             score_value = float(raw_value)
-            if score_value <= 1.0:
+            if is_probability_scale:
                 score_value *= 100.0
             normalized[emotion] = round(score_value, 4)
         except (TypeError, ValueError):
@@ -389,17 +401,42 @@ def predict_emotion_pipeline(image_bytes: bytes) -> Dict[str, Any]:
             confidence_percent = round(max(0.0, min(1.0, confidence)) * 100.0, 4)
             scores = _normalize_emotion_percentages(fen_result.get("scores", {}))
             fen_emotion = str(fen_result.get("emotion", "neutral"))
+            chosen_emotion = _choose_emotion_from_scores(scores, fallback=fen_emotion)
+            chosen_confidence = float(scores.get(chosen_emotion, confidence_percent))
+            chosen_confidence = round(max(0.0, min(100.0, chosen_confidence)), 4)
 
-            # Use FEN directly only when it is confident enough.
+            # Use FEN directly, but preserve the model label even when confidence is modest.
             if confidence_percent >= FEN_MIN_CONFIDENCE_PERCENT:
                 return {
                     "success": True,
-                    "emotion": fen_emotion,
-                    "confidence": confidence_percent,
+                    "emotion": chosen_emotion,
+                    "confidence": chosen_confidence,
                     "face_detected": bool(fen_result.get("face_detected", True)),
                     "provider": "fen",
                     "scores": scores,
                 }
+
+            if confidence_percent > 0:
+                return {
+                    "success": True,
+                    "emotion": chosen_emotion,
+                    "confidence": chosen_confidence,
+                    "face_detected": bool(fen_result.get("face_detected", True)),
+                    "provider": "fen",
+                    "scores": scores,
+                    "message": "FEN confidence is low; selected the strongest emotion from model scores.",
+                }
+
+        elif FEN_STRICT_MODE:
+            return {
+                "success": False,
+                "emotion": "neutral",
+                "confidence": 0.0,
+                "face_detected": False,
+                "provider": "fen",
+                "scores": _normalize_emotion_scores({}),
+                "message": "FEN model is not trained yet. Train the model before using facial emotion output.",
+            }
 
     # Provider consensus fallback on the face crop (FER + DeepFace).
     face_rgb = cv2.cvtColor(face_crop, cv2.COLOR_BGR2RGB)

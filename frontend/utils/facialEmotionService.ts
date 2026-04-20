@@ -85,6 +85,8 @@ export interface EmotionModelInfoResponse {
 const BACKEND_URL_KEY = 'signlanguage_backend_url';
 const DEFAULT_BACKEND_URL = 'https://improved-space-chainsaw-97rxv5p9r4w2q76-8000.app.github.dev';
 const EMOTION_REQUEST_TIMEOUT_MS = 20000;
+const FACIAL_HEALTH_ENDPOINTS = ['/api/facial-emotion/health', '/health'];
+const FACIAL_MODEL_INFO_ENDPOINTS = ['/api/facial-emotion/model-info', '/model-info'];
 
 function normalizeBackendUrl(value: string): string {
   return value.trim().replace(/\/+$/, '');
@@ -185,6 +187,7 @@ function collectBackendBaseUrlCandidates(): string[] {
   const host = hostUri?.split(':')[0];
   if (host && isUsableHost(host)) {
     candidates.push(`http://${host}:8000`);
+    candidates.push(`http://${host}:8001`);
   }
 
   const extraUrl = Constants.expoConfig?.extra?.backendUrl;
@@ -298,14 +301,16 @@ export async function checkFacialApiHealth(): Promise<boolean> {
   const candidates = await getBackendBaseUrlCandidates();
 
   for (const baseUrl of candidates) {
-    try {
-      const response = await fetchWithTimeout(`${baseUrl}/api/facial-emotion/health`, {}, 4000);
-      if (response.ok) {
-        await saveBackendBaseUrl(baseUrl);
-        return true;
+    for (const endpoint of FACIAL_HEALTH_ENDPOINTS) {
+      try {
+        const response = await fetchWithTimeout(`${baseUrl}${endpoint}`, {}, 4000);
+        if (response.ok) {
+          await saveBackendBaseUrl(baseUrl);
+          return true;
+        }
+      } catch {
+        // Try next endpoint/base URL.
       }
-    } catch {
-      // Try next candidate URL.
     }
   }
 
@@ -324,8 +329,10 @@ export async function analyzeEmotionFromSnapshot(imageBase64: string): Promise<E
     try {
       const attempts: { endpoint: string; body: Record<string, string> }[] = [
         { endpoint: '/api/facial-emotion/emotion', body: { image: imageBase64 } },
+        { endpoint: '/api/facial-emotion/predict-emotion', body: { image: imageBase64 } },
         { endpoint: '/api/facial-emotion/analyze-frame', body: { image_base64: imageBase64 } },
         { endpoint: '/api/emotion/predict', body: { image: imageBase64 } },
+        { endpoint: '/predict-emotion', body: { image: imageBase64 } },
       ];
 
       for (const attempt of attempts) {
@@ -443,12 +450,27 @@ export async function getEmotionTrainingStatus(jobId?: string): Promise<EmotionT
 }
 
 export async function getEmotionModelInfo(): Promise<EmotionModelInfoResponse> {
-  const baseUrl = await resolveBackendBaseUrl();
-  const response = await fetch(`${baseUrl}/api/facial-emotion/model-info`);
-  if (!response.ok) {
-    const errorText = await response.text();
-    throw new Error(errorText || `Model info request failed (${response.status})`);
+  const candidates = await getBackendBaseUrlCandidates();
+  let lastError: Error | null = null;
+
+  for (const baseUrl of candidates) {
+    for (const endpoint of FACIAL_MODEL_INFO_ENDPOINTS) {
+      try {
+        const response = await fetchWithTimeout(`${baseUrl}${endpoint}`, {}, 5000);
+        if (!response.ok) {
+          const errorText = await response.text();
+          lastError = new Error(errorText || `Model info request failed (${response.status})`);
+          continue;
+        }
+
+        const payload = (await response.json()) as EmotionModelInfoResponse;
+        await saveBackendBaseUrl(baseUrl);
+        return payload;
+      } catch (error) {
+        lastError = error instanceof Error ? error : new Error('Model info request failed');
+      }
+    }
   }
 
-  return (await response.json()) as EmotionModelInfoResponse;
+  throw lastError ?? new Error('Model info request failed');
 }
