@@ -49,6 +49,9 @@
     "experiments": {
       "typedRoutes": true,
       "reactCompiler": true
+    },
+    "extra": {
+      "backendUrl": "https://improved-space-chainsaw-97rxv5p9r4w2q76-8000.app.github.dev"
     }
   }
 }

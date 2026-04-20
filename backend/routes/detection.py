@@ -7,7 +7,7 @@ from __future__ import annotations
 
 from fastapi import APIRouter, File, HTTPException, UploadFile
 
-from services.facial_emotion_service import analyze_facial_emotion
+from services.facial_emotion_service import predict_emotion_pipeline
 
 router = APIRouter()
 
@@ -27,7 +27,7 @@ async def detect_image(file: UploadFile = File(...)):
 
 	image_bytes = await file.read()
 	try:
-		emotion_result = analyze_facial_emotion(image_bytes)
+		emotion_result = predict_emotion_pipeline(image_bytes)
 	except Exception as exc:
 		raise HTTPException(status_code=500, detail=f"Detection failed: {exc}") from exc
 
@@ -40,6 +40,8 @@ async def detect_image(file: UploadFile = File(...)):
 		"emotion": {
 			"value": emotion_result.get("emotion"),
 			"confidence": emotion_result.get("confidence"),
+			"provider": emotion_result.get("provider"),
+			"face_detected": emotion_result.get("face_detected"),
 		},
 		"note": "Sign model pipeline is not wired yet; this endpoint currently returns emotion-only fallback.",
 	}
