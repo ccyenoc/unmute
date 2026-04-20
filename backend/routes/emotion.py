@@ -26,7 +26,7 @@ from services.facial_emotion_service import (
 from services.emotion_detector import get_fen_model_info
 
 router = APIRouter()
-logger = logging.getLogger("facial-emotion")
+logger = logging.getLogger("uvicorn.error")
 
 
 class EmotionFrameRequest(BaseModel):
@@ -92,10 +92,10 @@ def analyze_snapshot(payload: EmotionSnapshotRequest):
     Accepts payload: {"image": "<base64>"}
     """
     try:
-        logger.info("snapshot request received: image_base64_length=%s", len(payload.image or ""))
+        logger.warning("FACIAL_API request: image_base64_length=%s", len(payload.image or ""))
         result = analyze_facial_emotion_from_base64(payload.image)
-        logger.info(
-            "snapshot analyzed: emotion=%s confidence=%s provider=%s face_detected=%s",
+        logger.warning(
+            "FACIAL_API result: emotion=%s confidence=%s provider=%s face_detected=%s",
             result.get("emotion"),
             result.get("confidence"),
             result.get("provider"),
