@@ -287,7 +287,10 @@ export default function TranslatorScreen() {
         ]}
       >
         <View style={styles.emotionOverlayHeader} {...panResponder.panHandlers}>
-          <Text style={styles.emotionOverlayTitle}>Facial Expression API</Text>
+          <View>
+            <Text style={styles.emotionOverlayTitle}>Facial Expression API</Text>
+            <Text style={styles.emotionOverlaySubtitle}>Live Emotion Snapshot</Text>
+          </View>
           <View style={styles.emotionOverlayActions}>
             <TouchableOpacity style={styles.zoomControl} onPress={() => zoomOverlay(-0.1)}>
               <Text style={styles.zoomControlText}>-</Text>
@@ -298,7 +301,23 @@ export default function TranslatorScreen() {
           </View>
         </View>
 
-        <ScrollView style={styles.emotionOverlayScroll} contentContainerStyle={styles.emotionOverlayScrollContent}>
+        <View style={styles.overlayMetaRow}>
+          <View style={styles.metaPill}>
+            <Text style={styles.metaPillLabel}>Emotion</Text>
+            <Text style={styles.metaPillValue}>{payload.emotion}</Text>
+          </View>
+          <View style={styles.metaPill}>
+            <Text style={styles.metaPillLabel}>Confidence</Text>
+            <Text style={styles.metaPillValue}>{payload.confidence}</Text>
+          </View>
+        </View>
+
+        <ScrollView
+          style={styles.emotionOverlayScroll}
+          contentContainerStyle={styles.emotionOverlayScrollContent}
+          nestedScrollEnabled
+          showsVerticalScrollIndicator
+        >
           <Text style={styles.emotionOverlayPayload}>{JSON.stringify(payload, null, 2)}</Text>
         </ScrollView>
 
@@ -447,72 +466,115 @@ const styles = StyleSheet.create({
   },
   emotionOverlayCard: {
     position: 'absolute',
-    width: 240,
-    maxHeight: 340,
-    backgroundColor: 'rgba(0, 0, 0, 0.75)',
-    borderRadius: 10,
-    padding: 10,
+    width: 260,
+    maxHeight: 360,
+    backgroundColor: 'rgba(14, 18, 24, 0.9)',
+    borderRadius: 14,
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.15)',
+    padding: 12,
+    boxShadow: '0px 8px 18px rgba(0, 0, 0, 0.28)',
   },
   emotionOverlayHeader: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    marginBottom: 6,
+    marginBottom: 10,
   },
   emotionOverlayTitle: {
-    color: '#FFFFFF',
-    fontSize: 12,
+    color: '#F5F8FF',
+    fontSize: 13,
     fontWeight: '700',
+    letterSpacing: 0.3,
+  },
+  emotionOverlaySubtitle: {
+    color: 'rgba(231, 240, 255, 0.75)',
+    fontSize: 10,
+    marginTop: 2,
   },
   emotionOverlayActions: {
     flexDirection: 'row',
     gap: 6,
   },
   zoomControl: {
-    width: 24,
-    height: 24,
-    borderRadius: 12,
+    width: 26,
+    height: 26,
+    borderRadius: 13,
     justifyContent: 'center',
     alignItems: 'center',
-    backgroundColor: 'rgba(255,255,255,0.22)',
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.35)',
+    backgroundColor: 'rgba(255,255,255,0.14)',
   },
   zoomControlText: {
-    color: '#FFFFFF',
+    color: '#F5F8FF',
     fontSize: 16,
     fontWeight: '700',
     lineHeight: 18,
   },
+  overlayMetaRow: {
+    flexDirection: 'row',
+    gap: 8,
+    marginBottom: 8,
+  },
+  metaPill: {
+    flex: 1,
+    borderRadius: 10,
+    backgroundColor: 'rgba(255,255,255,0.1)',
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.16)',
+    paddingVertical: 6,
+    paddingHorizontal: 8,
+  },
+  metaPillLabel: {
+    color: 'rgba(225, 238, 255, 0.72)',
+    fontSize: 9,
+    textTransform: 'uppercase',
+    letterSpacing: 0.5,
+  },
+  metaPillValue: {
+    color: '#FFFFFF',
+    fontSize: 12,
+    fontWeight: '700',
+    marginTop: 2,
+  },
   emotionOverlayScroll: {
-    maxHeight: 240,
+    maxHeight: 220,
+    borderRadius: 10,
+    backgroundColor: 'rgba(2, 6, 12, 0.62)',
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.12)',
   },
   emotionOverlayScrollContent: {
-    paddingBottom: 8,
+    padding: 10,
   },
   emotionOverlayPayload: {
-    color: '#FFFFFF',
+    color: '#E9F0FF',
     fontSize: 11,
     lineHeight: 16,
     fontFamily: 'monospace',
   },
   emotionOverlayFooter: {
-    marginTop: 8,
+    marginTop: 10,
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
   },
   dragHint: {
-    color: 'rgba(255,255,255,0.75)',
+    color: 'rgba(233, 240, 255, 0.8)',
     fontSize: 10,
-    fontWeight: '500',
+    fontWeight: '600',
   },
   emotionOverlayCloseButton: {
-    paddingHorizontal: 10,
-    paddingVertical: 4,
-    borderRadius: 6,
-    backgroundColor: 'rgba(255,255,255,0.2)',
+    paddingHorizontal: 12,
+    paddingVertical: 5,
+    borderRadius: 7,
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.26)',
+    backgroundColor: 'rgba(255,255,255,0.16)',
   },
   emotionOverlayCloseText: {
-    color: '#FFFFFF',
+    color: '#F5F8FF',
     fontSize: 11,
     fontWeight: '600',
   },
