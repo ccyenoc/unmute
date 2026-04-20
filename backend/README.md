@@ -7,6 +7,7 @@ Python FastAPI backend with MediaPipe for real-time sign language detection.
 - **Framework**: FastAPI
 - **Hand Detection**: MediaPipe (21 landmarks per hand)
 - **ML Model**: TensorFlow/Keras
+- **Facial Emotion Detection**: DeepFace with FER fallback
 - **Video Processing**: OpenCV
 - **API**: RESTful with CORS support
 
@@ -132,6 +133,132 @@ curl -X POST "http://localhost:8000/api/training/train-model?epochs=50&batch_siz
 
 #### GET `/api/training/dataset-info`
 View dataset statistics.
+
+### Facial Emotion
+
+#### GET `/api/facial-emotion/health`
+Check whether the emotion service is ready.
+
+#### POST `/api/facial-emotion/analyze-image`
+Detect facial emotion from an uploaded image.
+
+```bash
+curl -X POST "http://localhost:8000/api/facial-emotion/analyze-image" \
+  -F "file=@face.jpg"
+```
+
+#### POST `/api/facial-emotion/analyze-frame`
+Detect facial emotion from a base64-encoded mobile camera frame.
+
+```bash
+curl -X POST "http://localhost:8000/api/facial-emotion/analyze-frame" \
+  -H "Content-Type: application/json" \
+  -d '{"image_base64":"data:image/jpeg;base64,/9j/..."}'
+```
+
+**Response:**
+```json
+{
+  "success": true,
+  "face_detected": true,
+  "faces_detected": 1,
+  "provider": "deepface",
+  "emotion": "happy",
+  "confidence": 98.42,
+  "scores": {
+    "angry": 0,
+    "disgust": 0,
+    "fear": 0,
+    "happy": 98.42,
+    "sad": 0,
+    "surprise": 1.58,
+    "neutral": 0
+  },
+  "results": []
+}
+```
+
+#### GET `/api/facial-emotion/model-info`
+Returns available providers and supported emotion labels.
+
+#### POST `/api/facial-emotion/collect-sample`
+Collect and store labeled emotion samples for optional custom training.
+
+```bash
+curl -X POST "http://localhost:8000/api/facial-emotion/collect-sample?label=happy" \
+  -F "file=@face_happy.jpg"
+```
+
+#### GET `/api/facial-emotion/dataset-info`
+View emotion dataset size per class.
+
+```bash
+curl "http://localhost:8000/api/facial-emotion/dataset-info"
+```
+
+#### POST `/api/facial-emotion/train`
+Start a background emotion training job scaffold.
+
+```bash
+curl -X POST "http://localhost:8000/api/facial-emotion/train?epochs=20&batch_size=32"
+```
+
+#### GET `/api/facial-emotion/training-status`
+Check current or previous training job status.
+
+```bash
+curl "http://localhost:8000/api/facial-emotion/training-status"
+```
+
+```bash
+curl "http://localhost:8000/api/facial-emotion/training-status?job_id=<job_id>"
+```
+
+### Fusion
+
+#### POST `/api/fusion/interpret`
+Combines sign output and facial emotion to detect alignment/mismatch context.
+
+```bash
+curl -X POST "http://localhost:8000/api/fusion/interpret" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "sign":"HELLO",
+    "emotion":"angry",
+    "confidence":87,
+    "expected_emotions":["happy","neutral"]
+  }'
+```
+
+**Fusion Response:**
+```json
+{
+  "sign": "HELLO",
+  "emotion": "angry",
+  "confidence": 87,
+  "status": "mismatch",
+  "message": "Emotion may not match expected context. Consider clarifying intent.",
+  "expected_emotions": ["happy", "neutral"]
+}
+```
+
+## API Checklist (Implemented vs Later)
+
+Implemented now:
+- `GET /api/facial-emotion/health`
+- `GET /api/facial-emotion/model-info`
+- `POST /api/facial-emotion/analyze-image`
+- `POST /api/facial-emotion/analyze-frame`
+- `POST /api/facial-emotion/collect-sample`
+- `GET /api/facial-emotion/dataset-info`
+- `POST /api/facial-emotion/train`
+- `GET /api/facial-emotion/training-status`
+- `POST /api/fusion/interpret`
+
+You can fill later:
+- Custom model persistence (e.g., save `.h5`/`.keras` weights)
+- Real FER/FEN training loop + validation metrics endpoint
+- `POST /api/fusion/rules` (custom sign-emotion rule management)
 
 ### History
 

@@ -1,23 +1,35 @@
 import { Colors } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
+import {
+    analyzeEmotionFromBase64,
+    checkFacialApiHealth,
+    EmotionAnalysisResponse,
+    FusionResponse,
+    getBackendBaseUrl,
+    interpretFusion,
+} from '@/utils/facialEmotionService';
 import { simulateSignTranslation, storeTranslation } from '@/utils/translationService';
 import { CameraView, useCameraPermissions } from 'expo-camera';
 import React, { useRef, useState } from 'react';
 import {
-  ActivityIndicator,
-  Alert,
-  SafeAreaView,
-  StyleSheet,
-  Text,
-  TouchableOpacity,
-  View,
+    ActivityIndicator,
+    Alert,
+    SafeAreaView,
+    StyleSheet,
+    Text,
+    TouchableOpacity,
+    View,
 } from 'react-native';
 
 export default function TranslatorScreen() {
   const colorScheme = useColorScheme() ?? 'light';
+  const backendUrl = getBackendBaseUrl();
   const [permission, requestPermission] = useCameraPermissions();
   const [isRecording, setIsRecording] = useState(false);
   const [translation, setTranslation] = useState<string | null>(null);
+  const [emotionResult, setEmotionResult] = useState<EmotionAnalysisResponse | null>(null);
+  const [fusionResult, setFusionResult] = useState<FusionResponse | null>(null);
+  const [apiConnected, setApiConnected] = useState<boolean | null>(null);
   const [isProcessing, setIsProcessing] = useState(false);
   const cameraRef = useRef<CameraView>(null);
 
@@ -27,36 +39,74 @@ export default function TranslatorScreen() {
     }
   }, [permission, requestPermission]);
 
+  React.useEffect(() => {
+    let mounted = true;
+    checkFacialApiHealth().then((ok) => {
+      if (mounted) {
+        setApiConnected(ok);
+      }
+    });
+    return () => {
+      mounted = false;
+    };
+  }, []);
+
   const handleStartTranslation = async () => {
     if (!permission?.granted) {
       Alert.alert('Camera Permission', 'Camera permission is required to use the translator.');
       return;
     }
 
+    if (!cameraRef.current) {
+      Alert.alert('Camera Error', 'Camera is not ready yet. Please try again.');
+      return;
+    }
+
     setIsRecording(true);
     setTranslation(null);
+    setEmotionResult(null);
+    setFusionResult(null);
+    setIsProcessing(true);
 
-    // Simulate recording for 3 seconds
-    setTimeout(async () => {
-      setIsRecording(false);
-      setIsProcessing(true);
+    try {
+      // Keep a short delay for recording UX before capturing a frame.
+      await new Promise((resolve) => setTimeout(resolve, 1200));
+      const snapshot = await cameraRef.current.takePictureAsync({
+        base64: true,
+        quality: 0.5,
+        skipProcessing: true,
+      });
 
-      try {
-        // Simulate translation processing
-        const result = await simulateSignTranslation();
-        setTranslation(result);
+      const result = await simulateSignTranslation();
+      setTranslation(result);
 
-        // Store the translation
-        await storeTranslation(result);
+      if (snapshot.base64) {
+        try {
+          const emotion = await analyzeEmotionFromBase64(snapshot.base64);
+          setEmotionResult(emotion);
 
-        // Text-to-speech
-        await speakTranslation(result);
-      } catch {
-        Alert.alert('Error', 'Failed to process sign language.');
-      } finally {
-        setIsProcessing(false);
+          if (emotion.face_detected) {
+            try {
+              const fusion = await interpretFusion(result, emotion.emotion, emotion.confidence);
+              setFusionResult(fusion);
+            } catch {
+              setFusionResult(null);
+            }
+          }
+        } catch {
+          setEmotionResult(null);
+          setFusionResult(null);
+        }
       }
-    }, 3000);
+
+      await storeTranslation(result);
+      await speakTranslation(result);
+    } catch {
+      Alert.alert('Error', 'Failed to process sign language.');
+    } finally {
+      setIsRecording(false);
+      setIsProcessing(false);
+    }
   };
 
   const speakTranslation = async (text: string) => {
@@ -106,11 +156,26 @@ export default function TranslatorScreen() {
       </View>
 
       <View style={styles.controlsContainer}>
+        <View style={[styles.backendStatus, { borderColor: Colors[colorScheme].tabIconDefault }]}> 
+          <Text style={[styles.backendStatusLabel, { color: Colors[colorScheme].tabIconDefault }]}>Backend</Text>
+          <Text
+            style={[
+              styles.backendStatusValue,
+              { color: apiConnected ? '#22A06B' : apiConnected === false ? '#D92D20' : Colors[colorScheme].text },
+            ]}
+          >
+            {apiConnected === null ? 'Checking...' : apiConnected ? 'Connected' : 'Disconnected'}
+          </Text>
+        </View>
+        <Text style={[styles.backendUrlText, { color: Colors[colorScheme].tabIconDefault }]} numberOfLines={1}>
+          {backendUrl}
+        </Text>
+
         {isProcessing ? (
           <View style={styles.processingContainer}>
             <ActivityIndicator size="large" color={Colors[colorScheme].tint} />
             <Text style={[styles.processingText, { color: Colors[colorScheme].text }]}>
-              Processing sign language...
+              Processing sign language and emotion...
             </Text>
           </View>
         ) : translation ? (
@@ -121,6 +186,21 @@ export default function TranslatorScreen() {
             <Text style={[styles.translationText, { color: Colors[colorScheme].text }]}>
               {translation}
             </Text>
+            {emotionResult?.face_detected && (
+              <View style={styles.emotionContainer}>
+                <Text style={[styles.emotionLabel, { color: Colors[colorScheme].tabIconDefault }]}>
+                  Emotion
+                </Text>
+                <Text style={[styles.emotionText, { color: Colors[colorScheme].text }]}>
+                  {emotionResult.emotion} ({emotionResult.confidence.toFixed(1)}%)
+                </Text>
+                {fusionResult && (
+                  <Text style={[styles.fusionText, { color: Colors[colorScheme].tabIconDefault }]}> 
+                    Fusion: {fusionResult.status}
+                  </Text>
+                )}
+              </View>
+            )}
           </View>
         ) : (
           <Text style={[styles.instructionText, { color: Colors[colorScheme].tabIconDefault }]}>
@@ -188,6 +268,29 @@ const styles = StyleSheet.create({
     padding: 16,
     paddingBottom: 32,
   },
+  backendStatus: {
+    borderWidth: 1,
+    borderRadius: 10,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    marginBottom: 12,
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+  },
+  backendStatusLabel: {
+    fontSize: 12,
+    fontWeight: '600',
+    textTransform: 'uppercase',
+  },
+  backendStatusValue: {
+    fontSize: 13,
+    fontWeight: '700',
+  },
+  backendUrlText: {
+    fontSize: 11,
+    marginBottom: 12,
+  },
   processingContainer: {
     alignItems: 'center',
     marginBottom: 20,
@@ -215,6 +318,28 @@ const styles = StyleSheet.create({
     fontSize: 18,
     fontWeight: '500',
     lineHeight: 24,
+  },
+  emotionContainer: {
+    marginTop: 12,
+    paddingTop: 12,
+    borderTopWidth: 1,
+    borderTopColor: 'rgba(0, 122, 255, 0.2)',
+  },
+  emotionLabel: {
+    fontSize: 12,
+    fontWeight: '600',
+    marginBottom: 4,
+    textTransform: 'uppercase',
+  },
+  emotionText: {
+    fontSize: 16,
+    fontWeight: '600',
+  },
+  fusionText: {
+    marginTop: 6,
+    fontSize: 13,
+    fontWeight: '600',
+    textTransform: 'capitalize',
   },
   instructionText: {
     fontSize: 14,
