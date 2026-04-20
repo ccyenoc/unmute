@@ -42,6 +42,10 @@ except Exception:  # pragma: no cover - optional dependency
 EMOTIONS = EMOTION_LABELS
 USE_FEN = os.getenv("USE_FEN", "true").strip().lower() == "true"
 
+# Reduce "always neutral" bias from provider outputs when non-neutral signal is strong.
+NEUTRAL_OVERRIDE_MARGIN = float(os.getenv("NEUTRAL_OVERRIDE_MARGIN", "12.0"))
+NEUTRAL_OVERRIDE_MIN_SCORE = float(os.getenv("NEUTRAL_OVERRIDE_MIN_SCORE", "25.0"))
+
 BASE_DIR = Path(__file__).resolve().parent.parent
 EMOTION_DATASET_DIR = BASE_DIR / "data" / "emotion_dataset"
 
@@ -157,6 +161,30 @@ def _normalize_emotion_percentages(scores: Dict[str, Any]) -> Dict[str, float]:
     return normalized
 
 
+def _choose_emotion_from_scores(scores: Dict[str, Any], fallback: str = "neutral") -> str:
+    normalized_scores = _normalize_emotion_percentages(scores)
+    if not normalized_scores:
+        return fallback
+
+    top_emotion = max(normalized_scores, key=normalized_scores.get)
+    if top_emotion != "neutral":
+        return top_emotion
+
+    top_score = float(normalized_scores.get("neutral", 0.0))
+    non_neutral_scores = {k: v for k, v in normalized_scores.items() if k != "neutral"}
+    if not non_neutral_scores:
+        return "neutral"
+
+    candidate = max(non_neutral_scores, key=non_neutral_scores.get)
+    candidate_score = float(non_neutral_scores.get(candidate, 0.0))
+
+    # If neutral only wins by a narrow margin and non-neutral is strong, use the non-neutral label.
+    if candidate_score >= NEUTRAL_OVERRIDE_MIN_SCORE and (top_score - candidate_score) <= NEUTRAL_OVERRIDE_MARGIN:
+        return candidate
+
+    return "neutral"
+
+
 def _build_face_result(
     emotion: str,
     confidence: float,
@@ -188,8 +216,8 @@ def _analyze_with_deepface(image_rgb: np.ndarray) -> List[Dict[str, Any]]:
 
     results: List[Dict[str, Any]] = []
     for face in analysis:
-        emotion = str(face.get("dominant_emotion", "neutral"))
         scores = face.get("emotion", {}) or {}
+        emotion = _choose_emotion_from_scores(scores, fallback=str(face.get("dominant_emotion", "neutral")))
         confidence = scores.get(emotion, 0.0)
         results.append(
             _build_face_result(
@@ -356,7 +384,7 @@ def predict_emotion_pipeline(image_bytes: bytes) -> Dict[str, Any]:
         if detections:
             scores = detections[0].get("emotions", {}) or {}
             if scores:
-                emotion = max(scores, key=scores.get)
+                emotion = _choose_emotion_from_scores(scores)
                 confidence = float(scores.get(emotion, 0.0))
                 if confidence > 1.0:
                     confidence = confidence / 100.0
@@ -379,7 +407,7 @@ def predict_emotion_pipeline(image_bytes: bytes) -> Dict[str, Any]:
         if isinstance(analysis, list):
             analysis = analysis[0] if analysis else {}
         scores = analysis.get("emotion", {}) or {}
-        emotion = str(analysis.get("dominant_emotion", "neutral"))
+        emotion = _choose_emotion_from_scores(scores, fallback=str(analysis.get("dominant_emotion", "neutral")))
         confidence = float(scores.get(emotion, 0.0))
         if confidence > 1.0:
             confidence = confidence / 100.0
