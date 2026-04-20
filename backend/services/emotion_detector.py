@@ -43,6 +43,10 @@ FEN_SMILE_STRONG_MIN = float(os.getenv("FEN_SMILE_STRONG_MIN", "75.0"))
 FEN_SMILE_MAX_HAPPY_GAP = float(os.getenv("FEN_SMILE_MAX_HAPPY_GAP", "22.0"))
 FEN_SMILE_HAPPY_BOOST_SCALE = float(os.getenv("FEN_SMILE_HAPPY_BOOST_SCALE", "0.9"))
 FEN_SMILE_SAD_SUPPRESS = float(os.getenv("FEN_SMILE_SAD_SUPPRESS", "0.72"))
+FEN_POST_LOGIC_ENABLED = os.getenv("FEN_POST_LOGIC_ENABLED", "true").strip().lower() == "true"
+FEN_HAPPY_RESCUE_SMILE_MIN = float(os.getenv("FEN_HAPPY_RESCUE_SMILE_MIN", "68.0"))
+FEN_HAPPY_RESCUE_HAPPY_MIN = float(os.getenv("FEN_HAPPY_RESCUE_HAPPY_MIN", "10.0"))
+FEN_HAPPY_RESCUE_GAP_MAX = float(os.getenv("FEN_HAPPY_RESCUE_GAP_MAX", "16.0"))
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 DATASET_DIR = BASE_DIR / "data" / "emotion_dataset"
@@ -670,6 +674,22 @@ def predict_with_fen(image_bytes: bytes) -> Optional[Dict[str, Any]]:
             scores["sad"] = round(raw_sad * (FEN_SMILE_SAD_SUPPRESS if strong_smile else 0.82), 4)
             scores["fear"] = round(raw_fear * (0.84 if strong_smile else 0.88), 4)
             scores["neutral"] = round(raw_neutral * (0.9 if strong_smile else 0.95), 4)
+
+        if FEN_POST_LOGIC_ENABLED and scores:
+            top_emotion = max(scores, key=scores.get)
+            top_score = float(scores.get(top_emotion, 0.0))
+            happy_score = float(scores.get("happy", 0.0))
+
+            # Rescue happy when smile evidence is strong and happy is close to the top class.
+            if (
+                smile_score >= FEN_HAPPY_RESCUE_SMILE_MIN
+                and happy_score >= FEN_HAPPY_RESCUE_HAPPY_MIN
+                and top_emotion in {"sad", "fear", "neutral"}
+                and (top_score - happy_score) <= FEN_HAPPY_RESCUE_GAP_MAX
+            ):
+                scores["happy"] = round(top_score + 0.35, 4)
+                scores["sad"] = round(float(scores.get("sad", 0.0)) * 0.9, 4)
+                scores["fear"] = round(float(scores.get("fear", 0.0)) * 0.92, 4)
 
     model_emotion = labels[best_idx] if best_idx < len(labels) else "neutral"
     emotion = max(scores, key=scores.get) if scores else model_emotion
