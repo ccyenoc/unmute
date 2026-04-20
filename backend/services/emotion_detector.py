@@ -39,6 +39,10 @@ FEN_SMILE_CALIBRATION = os.getenv("FEN_SMILE_CALIBRATION", "true").strip().lower
 FEN_SMILE_TRIGGER_MIN = float(os.getenv("FEN_SMILE_TRIGGER_MIN", "65.0"))
 FEN_BASE_HAPPY_MIN = float(os.getenv("FEN_BASE_HAPPY_MIN", "18.0"))
 FEN_HAPPY_PROMOTE_MARGIN = float(os.getenv("FEN_HAPPY_PROMOTE_MARGIN", "12.0"))
+FEN_SMILE_STRONG_MIN = float(os.getenv("FEN_SMILE_STRONG_MIN", "75.0"))
+FEN_SMILE_MAX_HAPPY_GAP = float(os.getenv("FEN_SMILE_MAX_HAPPY_GAP", "22.0"))
+FEN_SMILE_HAPPY_BOOST_SCALE = float(os.getenv("FEN_SMILE_HAPPY_BOOST_SCALE", "0.9"))
+FEN_SMILE_SAD_SUPPRESS = float(os.getenv("FEN_SMILE_SAD_SUPPRESS", "0.72"))
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 DATASET_DIR = BASE_DIR / "data" / "emotion_dataset"
@@ -641,18 +645,31 @@ def predict_with_fen(image_bytes: bytes) -> Optional[Dict[str, Any]]:
     if input_mode == "image" and FEN_SMILE_CALIBRATION:
         smile_score = _estimate_smile_score(image_bgr)
         raw_happy = float(scores.get("happy", 0.0))
+        raw_sad = float(scores.get("sad", 0.0))
+        raw_fear = float(scores.get("fear", 0.0))
+        raw_neutral = float(scores.get("neutral", 0.0))
         raw_top_score = float(max(scores.values())) if scores else 0.0
+        happy_gap = raw_top_score - raw_happy
+        strong_smile = smile_score >= max(FEN_SMILE_TRIGGER_MIN, FEN_SMILE_STRONG_MIN)
         should_promote_happy = (
             smile_score >= FEN_SMILE_TRIGGER_MIN
             and raw_happy >= FEN_BASE_HAPPY_MIN
             and (raw_top_score - raw_happy) <= FEN_HAPPY_PROMOTE_MARGIN
         )
+        if (
+            not should_promote_happy
+            and strong_smile
+            and raw_happy >= max(8.0, FEN_BASE_HAPPY_MIN * 0.5)
+            and happy_gap <= FEN_SMILE_MAX_HAPPY_GAP
+        ):
+            should_promote_happy = True
 
         if should_promote_happy:
-            scores["happy"] = round(max(raw_happy, smile_score), 4)
-            scores["sad"] = round(float(scores.get("sad", 0.0)) * 0.82, 4)
-            scores["fear"] = round(float(scores.get("fear", 0.0)) * 0.88, 4)
-            scores["neutral"] = round(float(scores.get("neutral", 0.0)) * 0.95, 4)
+            boosted_happy = max(raw_happy, smile_score * FEN_SMILE_HAPPY_BOOST_SCALE)
+            scores["happy"] = round(boosted_happy, 4)
+            scores["sad"] = round(raw_sad * (FEN_SMILE_SAD_SUPPRESS if strong_smile else 0.82), 4)
+            scores["fear"] = round(raw_fear * (0.84 if strong_smile else 0.88), 4)
+            scores["neutral"] = round(raw_neutral * (0.9 if strong_smile else 0.95), 4)
 
     model_emotion = labels[best_idx] if best_idx < len(labels) else "neutral"
     emotion = max(scores, key=scores.get) if scores else model_emotion

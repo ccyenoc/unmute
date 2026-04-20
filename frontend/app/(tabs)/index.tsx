@@ -1,45 +1,41 @@
 import { Colors } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import {
-    analyzeEmotionFromBase64,
-    checkFacialApiHealth,
-    EmotionAnalysisResponse,
-    FusionResponse,
-    getEmotionModelInfo,
-    interpretFusion,
+  analyzeEmotionFromBase64,
+  checkFacialApiHealth,
+  EmotionAnalysisResponse,
+  FusionResponse,
+  getEmotionModelInfo,
+  interpretFusion,
 } from '@/utils/facialEmotionService';
 import { FacialEmotionSnapshot, simulateSignTranslation, storeTranslation } from '@/utils/translationService';
 import { useFocusEffect } from '@react-navigation/native';
 import { CameraView, useCameraPermissions } from 'expo-camera';
 import React, { useCallback, useRef, useState } from 'react';
 import {
-    ActivityIndicator,
-    Alert,
-    Dimensions,
-    PanResponder,
-    ScrollView,
-    StyleSheet,
-    Text,
-    TouchableOpacity,
-    View,
+  ActivityIndicator,
+  Alert,
+  ScrollView,
+  StyleSheet,
+  Text,
+  TouchableOpacity,
+  View
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
+
+const toHistoryScores = (scores: EmotionAnalysisResponse['scores']): Record<string, number> => ({
+  angry: scores.angry,
+  disgust: scores.disgust,
+  fear: scores.fear,
+  happy: scores.happy,
+  neutral: scores.neutral,
+  sad: scores.sad,
+  surprise: scores.surprise,
+});
 
 export default function TranslatorScreen() {
   const colorScheme = useColorScheme() ?? 'light';
   const actionButtonTextColor = '#11181C';
-  const defaultOverlayScale = 0.82;
-  const defaultOverlayWidth = 220;
-  const defaultOverlayHeight = 300;
-  const { width: initialScreenWidth } = Dimensions.get('window');
-  const initialOverlayX = Math.max(8, initialScreenWidth - defaultOverlayWidth * defaultOverlayScale - 10);
-  const [overlayScale, setOverlayScale] = useState(defaultOverlayScale);
-  const [overlayPosition, setOverlayPosition] = useState({ x: initialOverlayX, y: 64 });
-  const dragStartRef = useRef({ x: initialOverlayX, y: 64 });
-  const touchStartRef = useRef({ x: 0, y: 0 });
-  const pinchStartDistanceRef = useRef<number | null>(null);
-  const pinchStartScaleRef = useRef(1);
-  const isPinchingRef = useRef(false);
   const [permission, requestPermission] = useCameraPermissions();
   const [isRecording, setIsRecording] = useState(false);
   const [translation, setTranslation] = useState<string | null>(null);
@@ -54,103 +50,7 @@ export default function TranslatorScreen() {
   const [emotionErrorMessage, setEmotionErrorMessage] = useState<string | null>(null);
   const cameraRef = useRef<CameraView>(null);
 
-  const clamp = (value: number, min: number, max: number) => Math.min(Math.max(value, min), max);
 
-  const getOverlayBounds = (scale: number) => {
-    const { width: screenWidth, height: screenHeight } = Dimensions.get('window');
-    const scaledWidth = defaultOverlayWidth * scale;
-    const scaledHeight = defaultOverlayHeight * scale;
-    return {
-      minX: 8,
-      maxX: Math.max(8, screenWidth - scaledWidth - 8),
-      minY: 12,
-      maxY: Math.max(52, screenHeight - scaledHeight - 64),
-    };
-  };
-
-  const getTouchDistance = (touches: readonly { pageX: number; pageY: number }[]) => {
-    if (touches.length < 2) {
-      return 0;
-    }
-    const dx = touches[0].pageX - touches[1].pageX;
-    const dy = touches[0].pageY - touches[1].pageY;
-    return Math.hypot(dx, dy);
-  };
-
-  const panResponder = useRef(
-    PanResponder.create({
-      onMoveShouldSetPanResponder: (evt, gestureState) => {
-        const touchCount = evt.nativeEvent.touches.length;
-        return touchCount > 1 || Math.abs(gestureState.dx) > 2 || Math.abs(gestureState.dy) > 2;
-      },
-      onPanResponderGrant: (evt, gestureState) => {
-        dragStartRef.current = overlayPosition;
-        touchStartRef.current = { x: gestureState.x0, y: gestureState.y0 };
-        if (evt.nativeEvent.touches.length > 1) {
-          pinchStartDistanceRef.current = getTouchDistance(evt.nativeEvent.touches);
-          pinchStartScaleRef.current = overlayScale;
-          isPinchingRef.current = true;
-        } else {
-          pinchStartDistanceRef.current = null;
-          isPinchingRef.current = false;
-        }
-      },
-      onPanResponderMove: (evt, gestureState) => {
-        if (evt.nativeEvent.touches.length > 1) {
-          const currentDistance = getTouchDistance(evt.nativeEvent.touches);
-          if (!pinchStartDistanceRef.current || pinchStartDistanceRef.current <= 0) {
-            pinchStartDistanceRef.current = currentDistance;
-            pinchStartScaleRef.current = overlayScale;
-            isPinchingRef.current = true;
-            return;
-          }
-
-          const ratio = currentDistance / pinchStartDistanceRef.current;
-          const nextScale = clamp(pinchStartScaleRef.current * ratio, 0.6, 2.3);
-          const bounds = getOverlayBounds(nextScale);
-
-          setOverlayScale(nextScale);
-          setOverlayPosition((currentPosition) => ({
-            x: clamp(currentPosition.x, bounds.minX, bounds.maxX),
-            y: clamp(currentPosition.y, bounds.minY, bounds.maxY),
-          }));
-          return;
-        }
-
-        if (isPinchingRef.current) {
-          return;
-        }
-
-        const bounds = getOverlayBounds(overlayScale);
-        const nextX = dragStartRef.current.x + (gestureState.moveX - touchStartRef.current.x);
-        const nextY = dragStartRef.current.y + (gestureState.moveY - touchStartRef.current.y);
-        setOverlayPosition({
-          x: clamp(nextX, bounds.minX, bounds.maxX),
-          y: clamp(nextY, bounds.minY, bounds.maxY),
-        });
-      },
-      onPanResponderRelease: () => {
-        pinchStartDistanceRef.current = null;
-        isPinchingRef.current = false;
-      },
-      onPanResponderTerminate: () => {
-        pinchStartDistanceRef.current = null;
-        isPinchingRef.current = false;
-      },
-    })
-  ).current;
-
-  const zoomOverlay = (delta: number) => {
-    setOverlayScale((current) => {
-      const nextScale = clamp(current + delta, 0.6, 2.3);
-      const bounds = getOverlayBounds(nextScale);
-      setOverlayPosition((currentPosition) => ({
-        x: clamp(currentPosition.x, bounds.minX, bounds.maxX),
-        y: clamp(currentPosition.y, bounds.minY, bounds.maxY),
-      }));
-      return nextScale;
-    });
-  };
 
   React.useEffect(() => {
     if (!permission?.granted) {
@@ -168,25 +68,42 @@ export default function TranslatorScreen() {
       setFenModelMessage(null);
       setFenMetadataSource(null);
 
-      Promise.all([checkFacialApiHealth(), getEmotionModelInfo()])
-        .then(([ok, modelInfo]) => {
-          if (mounted) {
-            setApiConnected(ok);
-            setBackendStatusLabel(ok ? 'Connected' : 'Disconnected');
-            setFenReady(modelInfo.fen_model.ready);
-            setFenModelMessage(modelInfo.fen_model.message ?? null);
-            setFenMetadataSource(modelInfo.fen_model.metadata_source ?? null);
+      const refreshBackendState = async () => {
+        const healthResult = await checkFacialApiHealth().catch(() => false);
+        if (!mounted) {
+          return;
+        }
+
+        setApiConnected(healthResult);
+        setBackendStatusLabel('');
+
+        if (!healthResult) {
+          setFenReady(false);
+          setFenModelMessage('Backend is not reachable');
+          setFenMetadataSource(null);
+          return;
+        }
+
+        try {
+          const modelInfo = await getEmotionModelInfo();
+          if (!mounted) {
+            return;
           }
-        })
-        .catch(() => {
-          if (mounted) {
-            setApiConnected(false);
-            setBackendStatusLabel('Disconnected');
-            setFenReady(false);
-            setFenModelMessage('Unable to read FEN model status');
-            setFenMetadataSource(null);
+          setFenReady(modelInfo.fen_model.ready);
+          setFenModelMessage(modelInfo.fen_model.message ?? null);
+          setFenMetadataSource(modelInfo.fen_model.metadata_source ?? null);
+        } catch {
+          if (!mounted) {
+            return;
           }
-        });
+          // Keep API as connected and avoid showing a misleading hard error on temporary model-info failures.
+          setFenReady(null);
+          setFenModelMessage(null);
+          setFenMetadataSource(null);
+        }
+      };
+
+      void refreshBackendState();
 
       return () => {
         mounted = false;
@@ -237,7 +154,7 @@ export default function TranslatorScreen() {
             confidence: emotion.confidence,
             provider: emotion.provider,
             faces_detected: emotion.faces_detected,
-            scores: emotion.scores,
+            scores: toHistoryScores(emotion.scores),
           };
 
           if (emotion.face_detected) {
@@ -245,7 +162,11 @@ export default function TranslatorScreen() {
               const fusion = await interpretFusion(result, emotion.emotion, emotion.confidence);
               setFusionResult(fusion);
               historyEmotionSnapshot = {
-                ...historyEmotionSnapshot,
+                emotion: emotion.emotion,
+                confidence: emotion.confidence,
+                provider: emotion.provider,
+                faces_detected: emotion.faces_detected,
+                scores: toHistoryScores(emotion.scores),
                 fusion_status: fusion.status,
               };
             } catch {
@@ -286,18 +207,19 @@ export default function TranslatorScreen() {
     }
   };
 
-  const renderEmotionOverlay = () => {
+  const renderEmotionCard = () => {
     if (isRecording || !emotionResult) {
       return null;
     }
 
-    const confidenceNormalized = emotionResult
-      ? (emotionResult.confidence > 1 ? emotionResult.confidence / 100 : emotionResult.confidence)
-      : 0;
+    const confidencePercent = emotionResult.confidence <= 1
+      ? emotionResult.confidence * 100
+      : emotionResult.confidence;
+    const confidencePercentRounded = Number(confidencePercent.toFixed(2));
 
     const payload = {
       emotion: emotionResult.emotion,
-      confidence: Number(confidenceNormalized.toFixed(3)),
+      confidence: confidencePercentRounded,
       provider: emotionResult.provider,
       faces_detected: emotionResult.faces_detected,
       fusion_status: fusionResult?.status ?? 'aligned',
@@ -305,73 +227,51 @@ export default function TranslatorScreen() {
     };
 
     return (
-      <View
-        style={[
-          styles.emotionOverlayCard,
-          {
-            transform: [{ scale: overlayScale }],
-            left: overlayPosition.x,
-            top: overlayPosition.y,
-          },
-        ]}
-      >
-        <View style={styles.emotionOverlayHeader} {...panResponder.panHandlers}>
-          <View>
-            <Text style={styles.emotionOverlayTitle}>Facial Expression API</Text>
-            <Text style={styles.emotionOverlaySubtitle}>Live Emotion Snapshot</Text>
-          </View>
-          <View style={styles.emotionOverlayActions}>
-            <TouchableOpacity style={styles.zoomControl} onPress={() => zoomOverlay(-0.1)}>
-              <Text style={styles.zoomControlText}>-</Text>
-            </TouchableOpacity>
-            <TouchableOpacity style={styles.zoomControl} onPress={() => zoomOverlay(0.1)}>
-              <Text style={styles.zoomControlText}>+</Text>
-            </TouchableOpacity>
-          </View>
-        </View>
-
-        <View style={styles.overlayMetaRow}>
-          <View style={styles.metaPill}>
-            <Text style={styles.metaPillLabel}>Emotion</Text>
-            <Text style={styles.metaPillValue}>{payload.emotion}</Text>
-          </View>
-          <View style={styles.metaPill}>
-            <Text style={styles.metaPillLabel}>Confidence</Text>
-            <Text style={styles.metaPillValue}>{payload.confidence}</Text>
-          </View>
-        </View>
-
-        {emotionResult?.message ? (
-          <View style={styles.emotionNoticeBox}>
-            <Text style={styles.emotionNoticeText}>{emotionResult.message}</Text>
-          </View>
-        ) : null}
-
-        <ScrollView
-          style={styles.emotionOverlayScroll}
-          contentContainerStyle={styles.emotionOverlayScrollContent}
-          nestedScrollEnabled
-          showsVerticalScrollIndicator
-        >
-          <Text style={styles.emotionOverlayPayload}>{JSON.stringify(payload, null, 2)}</Text>
-        </ScrollView>
-
-        <View style={styles.emotionOverlayFooter}>
-          <Text style={styles.dragHint}>Drag to move, pinch or +/- to zoom</Text>
+      <View style={[styles.emotionCard, { borderColor: Colors[colorScheme].tabIconDefault }]}>
+        <View style={styles.emotionCardHeader}>
+          <Text style={[styles.emotionCardTitle, { color: Colors[colorScheme].text }]}>Facial Expression API</Text>
           <TouchableOpacity
-            style={styles.emotionOverlayCloseButton}
             onPress={() => {
               setEmotionResult(null);
               setFusionResult(null);
               setEmotionErrorMessage(null);
             }}
           >
-            <Text style={styles.emotionOverlayCloseText}>Cancel</Text>
+            <Text style={[styles.emotionCardClose, { color: Colors[colorScheme].tabIconDefault }]}>✕</Text>
           </TouchableOpacity>
+        </View>
+
+        <View style={styles.emotionCardContent}>
+          <View style={styles.emotionMetaRow}>
+            <View style={[styles.emotionMetaPill, { backgroundColor: 'rgba(34, 160, 107, 0.1)' }]}>
+              <Text style={[styles.emotionMetaLabel, { color: Colors[colorScheme].text }]}>Emotion</Text>
+              <Text style={[styles.emotionMetaValue, { color: '#22A06B' }]}>{emotionResult.emotion.toUpperCase()}</Text>
+            </View>
+            <View style={[styles.emotionMetaPill, { backgroundColor: 'rgba(0, 122, 255, 0.1)' }]}>
+              <Text style={[styles.emotionMetaLabel, { color: Colors[colorScheme].text }]}>Confidence</Text>
+              <Text style={[styles.emotionMetaValue, { color: '#007AFF' }]}>{confidencePercentRounded.toFixed(1)}%</Text>
+            </View>
+          </View>
+
+          {emotionResult?.message ? (
+            <View style={[styles.emotionNoticeBox, { backgroundColor: 'rgba(255, 149, 0, 0.1)', borderColor: 'rgba(255, 149, 0, 0.3)' }]}>
+              <Text style={[styles.emotionNoticeText, { color: '#FF9500' }]}>{emotionResult.message}</Text>
+            </View>
+          ) : null}
+
+          <ScrollView
+            style={styles.emotionPayloadScroll}
+            contentContainerStyle={styles.emotionPayloadScrollContent}
+            nestedScrollEnabled
+            showsVerticalScrollIndicator
+          >
+            <Text style={styles.emotionPayloadText}>{JSON.stringify(payload, null, 2)}</Text>
+          </ScrollView>
         </View>
       </View>
     );
   };
+
 
   if (!permission) {
     return (
@@ -394,109 +294,109 @@ export default function TranslatorScreen() {
 
   return (
     <SafeAreaView style={[styles.container, { backgroundColor: Colors[colorScheme].background }]}>
-      <View style={styles.cameraContainer}>
-        <CameraView
-          ref={cameraRef}
-          style={styles.camera}
-          facing="front"
-        />
-        {isRecording && (
-          <View style={styles.recordingIndicator}>
-            <View style={styles.recordingDot} />
-            <Text style={styles.recordingText}>Recording...</Text>
-          </View>
-        )}
-        {renderEmotionOverlay()}
-      </View>
-
-      <View style={styles.controlsContainer}>
-        <View style={[styles.backendStatus, { borderColor: Colors[colorScheme].tabIconDefault }]}> 
-          <Text style={[styles.backendStatusLabel, { color: Colors[colorScheme].tabIconDefault }]}>Backend</Text>
-          <View style={{ alignItems: 'flex-end' }}>
-            <Text
-              style={[
-                styles.backendStatusValue,
-                { color: apiConnected ? '#22A06B' : apiConnected === false ? '#D92D20' : Colors[colorScheme].text },
-              ]}
-            >
-              {backendStatusLabel}
-            </Text>
-            <Text style={[styles.backendStatusSubValue, { color: fenReady ? '#22A06B' : '#D92D20' }]}> 
-              {fenReady ? 'FEN Ready' : 'FEN Not Ready'}
-            </Text>
-          </View>
+      <ScrollView style={styles.scrollContent} contentContainerStyle={styles.scrollContentContainer}>
+        {/* Camera Section */}
+        <View style={styles.cameraSection}>
+          <CameraView
+            ref={cameraRef}
+            style={styles.camera}
+            facing="front"
+          />
+          {isRecording && (
+            <View style={styles.recordingIndicator}>
+              <View style={styles.recordingDot} />
+              <Text style={styles.recordingText}>Recording...</Text>
+            </View>
+          )}
         </View>
 
-        {fenModelMessage ? (
-          <Text style={[styles.fenStatusMessage, { color: Colors[colorScheme].tabIconDefault }]}> 
-            {fenModelMessage}
-          </Text>
-        ) : null}
+        {/* Emotion Card Section */}
+        {renderEmotionCard()}
 
-        {fenMetadataSource ? (
-          <Text style={[styles.fenStatusMessage, { color: Colors[colorScheme].tabIconDefault }]}> 
-            FEN metadata source: {fenMetadataSource}
-          </Text>
-        ) : null}
+        {/* Backend Status Section */}
+        <View style={styles.controlsContainer}>
+          
 
-        {emotionErrorMessage ? (
-          <Text style={[styles.fenStatusMessage, { color: '#D92D20' }]}> 
-            {emotionErrorMessage}
-          </Text>
-        ) : null}
-
-        {isProcessing ? (
-          <View style={styles.processingContainer}>
-            <ActivityIndicator size="large" color={Colors[colorScheme].tint} />
-            <Text style={[styles.processingText, { color: Colors[colorScheme].text }]}>
-              Processing sign language and emotion...
+          {fenModelMessage ? (
+            <Text style={[styles.fenStatusMessage, { color: Colors[colorScheme].tabIconDefault }]}> 
+              {fenModelMessage}
             </Text>
-          </View>
-        ) : translation ? (
-          <View style={styles.translationResultContainer}>
-            <Text style={[styles.translationLabel, { color: Colors[colorScheme].tabIconDefault }]}>
-              Translation
-            </Text>
-            <Text style={[styles.translationText, { color: Colors[colorScheme].text }]}>
-              {translation}
-            </Text>
-          </View>
-        ) : (
-          <Text style={[styles.instructionText, { color: Colors[colorScheme].tabIconDefault }]}>
-            Position yourself in front of the camera and tap the button below to start translating
-          </Text>
-        )}
+          ) : null}
 
-        <TouchableOpacity
-          style={[
-            styles.button,
-            styles.startButton,
-            {
-              opacity: isRecording || isProcessing ? 0.6 : 1,
-            },
-          ]}
-          onPress={handleStartTranslation}
-          disabled={isRecording || isProcessing}
-        >
-          <Text style={[styles.buttonText, { color: actionButtonTextColor }] }>
-            {isRecording ? 'Recording...' : 'Start Translation'}
-          </Text>
-        </TouchableOpacity>
-      </View>
+          {fenMetadataSource && fenMetadataSource !== 'training' ? (
+            <Text style={[styles.fenStatusMessage, { color: Colors[colorScheme].tabIconDefault }]}> 
+              FEN: {fenMetadataSource}
+            </Text>
+          ) : null}
+
+          {emotionErrorMessage ? (
+            <Text style={[styles.fenStatusMessage, { color: '#D92D20' }]}> 
+              {emotionErrorMessage}
+            </Text>
+          ) : null}
+
+          {/* Translator UI Section */}
+          {isProcessing ? (
+            <View style={styles.processingContainer}>
+              <ActivityIndicator size="large" color={Colors[colorScheme].tint} />
+              <Text style={[styles.processingText, { color: Colors[colorScheme].text }]}>
+                Processing sign language and emotion...
+              </Text>
+            </View>
+          ) : translation ? (
+            <View style={[styles.translationResultContainer, { borderLeftColor: Colors[colorScheme].tint }]}>
+              <Text style={[styles.translationLabel, { color: Colors[colorScheme].tabIconDefault }]}>
+                Translation Result
+              </Text>
+              <Text style={[styles.translationText, { color: Colors[colorScheme].text }]}>
+                {translation}
+              </Text>
+            </View>
+          ) : (
+            <Text style={[styles.instructionText, { color: Colors[colorScheme].tabIconDefault }]}>
+              Position yourself in front of the camera
+            </Text>
+          )}
+
+          {/* Start Button */}
+          <TouchableOpacity
+            style={[
+              styles.button,
+              styles.startButton,
+              {
+                opacity: isRecording || isProcessing ? 0.6 : 1,
+              },
+            ]}
+            onPress={handleStartTranslation}
+            disabled={isRecording || isProcessing}
+          >
+            <Text style={[styles.buttonText, { color: actionButtonTextColor }]}>
+              {isRecording ? 'Recording...' : 'Start Translation'}
+            </Text>
+          </TouchableOpacity>
+        </View>
+      </ScrollView>
     </SafeAreaView>
   );
+
 }
 
 const styles = StyleSheet.create({
   container: {
     flex: 1,
   },
-  cameraContainer: {
+  scrollContent: {
     flex: 1,
-    position: 'relative',
+  },
+  scrollContentContainer: {
+    paddingBottom: 20,
+  },
+  cameraSection: {
+    height: 320,
     borderRadius: 12,
     overflow: 'hidden',
-    margin: 12,
+    margin: 8,
+    marginBottom: 12,
   },
   camera: {
     flex: 1,
@@ -522,6 +422,69 @@ const styles = StyleSheet.create({
   recordingText: {
     color: '#FFFFFF',
     fontWeight: '600',
+  },
+  emotionCard: {
+    marginHorizontal: 8,
+    marginBottom: 12,
+    borderWidth: 1,
+    borderRadius: 12,
+    padding: 12,
+    backgroundColor: 'rgba(14, 18, 24, 0.5)',
+  },
+  emotionCardHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 12,
+  },
+  emotionCardTitle: {
+    fontSize: 14,
+    fontWeight: '700',
+    letterSpacing: 0.5,
+  },
+  emotionCardClose: {
+    fontSize: 18,
+    fontWeight: '600',
+  },
+  emotionCardContent: {
+    gap: 10,
+  },
+  emotionMetaRow: {
+    flexDirection: 'row',
+    gap: 10,
+  },
+  emotionMetaPill: {
+    flex: 1,
+    borderRadius: 10,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    alignItems: 'center',
+  },
+  emotionMetaLabel: {
+    fontSize: 11,
+    fontWeight: '600',
+    opacity: 0.7,
+  },
+  emotionMetaValue: {
+    fontSize: 16,
+    fontWeight: '700',
+    marginTop: 4,
+  },
+  emotionPayloadScroll: {
+    maxHeight: 210,
+    borderRadius: 10,
+    backgroundColor: 'rgba(2, 6, 12, 0.62)',
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.12)',
+  },
+  emotionPayloadScrollContent: {
+    padding: 10,
+  },
+  emotionPayloadText: {
+    color: '#E9F0FF',
+    fontSize: 11,
+    lineHeight: 16,
+    fontFamily: 'monospace',
   },
   emotionOverlayCard: {
     position: 'absolute',
@@ -655,8 +618,7 @@ const styles = StyleSheet.create({
     fontWeight: '600',
   },
   controlsContainer: {
-    padding: 16,
-    paddingBottom: 32,
+    paddingVertical: 8,
   },
   backendStatus: {
     borderWidth: 1,
@@ -697,12 +659,12 @@ const styles = StyleSheet.create({
     fontWeight: '500',
   },
   translationResultContainer: {
-    backgroundColor: 'rgba(0, 122, 255, 0.1)',
+    backgroundColor: 'rgba(0, 122, 255, 0.08)',
     borderRadius: 12,
     padding: 16,
     marginBottom: 20,
+    marginHorizontal: 12,
     borderLeftWidth: 4,
-    borderLeftColor: '#007AFF',
   },
   translationLabel: {
     fontSize: 12,
@@ -719,18 +681,21 @@ const styles = StyleSheet.create({
     fontSize: 14,
     textAlign: 'center',
     marginBottom: 20,
+    marginHorizontal: 12,
   },
   button: {
     paddingVertical: 14,
     paddingHorizontal: 24,
     borderRadius: 12,
     alignItems: 'center',
+    marginHorizontal: 12,
     boxShadow: '0px 2px 4px rgba(0, 0, 0, 0.1)',
   },
   startButton: {
     backgroundColor: '#FFFFFF',
     borderWidth: 1,
     borderColor: 'rgba(0, 0, 0, 0.08)',
+    marginTop: 8,
   },
   buttonText: {
     fontSize: 16,
