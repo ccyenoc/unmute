@@ -45,6 +45,7 @@ USE_FEN = os.getenv("USE_FEN", "true").strip().lower() == "true"
 # Reduce "always neutral" bias from provider outputs when non-neutral signal is strong.
 NEUTRAL_OVERRIDE_MARGIN = float(os.getenv("NEUTRAL_OVERRIDE_MARGIN", "80.0"))
 NEUTRAL_OVERRIDE_MIN_SCORE = float(os.getenv("NEUTRAL_OVERRIDE_MIN_SCORE", "2.0"))
+FEN_MIN_CONFIDENCE_PERCENT = float(os.getenv("FEN_MIN_CONFIDENCE_PERCENT", "65.0"))
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 EMOTION_DATASET_DIR = BASE_DIR / "data" / "emotion_dataset"
@@ -198,6 +199,26 @@ def _build_face_result(
         "scores": _normalize_emotion_percentages(scores),
         "region": region or {},
         "provider": provider,
+    }
+
+
+def _weighted_merge_scores(score_sets: List[Dict[str, float]], weights: List[float]) -> Dict[str, float]:
+    merged = {emotion: 0.0 for emotion in EMOTIONS}
+    total_weight = 0.0
+
+    for scores, weight in zip(score_sets, weights):
+        if weight <= 0:
+            continue
+        total_weight += weight
+        for emotion in EMOTIONS:
+            merged[emotion] += float(scores.get(emotion, 0.0)) * weight
+
+    if total_weight <= 0:
+        return merged
+
+    return {
+        emotion: round(value / total_weight, 4)
+        for emotion, value in merged.items()
     }
 
 
@@ -367,36 +388,34 @@ def predict_emotion_pipeline(image_bytes: bytes) -> Dict[str, Any]:
                 confidence = confidence / 100.0
             confidence_percent = round(max(0.0, min(1.0, confidence)) * 100.0, 4)
             scores = _normalize_emotion_percentages(fen_result.get("scores", {}))
-            return {
-                "success": True,
-                "emotion": str(fen_result.get("emotion", "neutral")),
-                "confidence": confidence_percent,
-                "face_detected": bool(fen_result.get("face_detected", True)),
-                "provider": "fen",
-                "scores": scores,
-            }
+            fen_emotion = str(fen_result.get("emotion", "neutral"))
 
-    # Option A: pretrained FER model fallback on the face crop.
+            # Use FEN directly only when it is confident enough.
+            if confidence_percent >= FEN_MIN_CONFIDENCE_PERCENT:
+                return {
+                    "success": True,
+                    "emotion": fen_emotion,
+                    "confidence": confidence_percent,
+                    "face_detected": bool(fen_result.get("face_detected", True)),
+                    "provider": "fen",
+                    "scores": scores,
+                }
+
+    # Provider consensus fallback on the face crop (FER + DeepFace).
     face_rgb = cv2.cvtColor(face_crop, cv2.COLOR_BGR2RGB)
+    provider_score_sets: List[Dict[str, float]] = []
+    provider_weights: List[float] = []
+    provider_names: List[str] = []
+
     if FER is not None:
         detector = FER(mtcnn=False)
         detections = detector.detect_emotions(face_rgb)
         if detections:
             scores = detections[0].get("emotions", {}) or {}
             if scores:
-                emotion = _choose_emotion_from_scores(scores)
-                confidence = float(scores.get(emotion, 0.0))
-                if confidence > 1.0:
-                    confidence = confidence / 100.0
-                normalized_scores = _normalize_emotion_percentages(scores)
-                return {
-                    "success": True,
-                    "emotion": emotion,
-                    "confidence": round(max(0.0, min(1.0, confidence)) * 100.0, 4),
-                    "face_detected": True,
-                    "provider": "fer",
-                    "scores": normalized_scores,
-                }
+                provider_score_sets.append(_normalize_emotion_percentages(scores))
+                provider_weights.append(0.45)
+                provider_names.append("fer")
 
     if DeepFace is not None:
         analysis = DeepFace.analyze(
@@ -407,18 +426,24 @@ def predict_emotion_pipeline(image_bytes: bytes) -> Dict[str, Any]:
         if isinstance(analysis, list):
             analysis = analysis[0] if analysis else {}
         scores = analysis.get("emotion", {}) or {}
-        emotion = _choose_emotion_from_scores(scores, fallback=str(analysis.get("dominant_emotion", "neutral")))
-        confidence = float(scores.get(emotion, 0.0))
-        if confidence > 1.0:
-            confidence = confidence / 100.0
-        normalized_scores = _normalize_emotion_percentages(scores)
+        if scores:
+            provider_score_sets.append(_normalize_emotion_percentages(scores))
+            provider_weights.append(0.55)
+            provider_names.append("deepface")
+
+    if provider_score_sets:
+        merged_scores = _weighted_merge_scores(provider_score_sets, provider_weights)
+        emotion = _choose_emotion_from_scores(merged_scores)
+        confidence_percent = float(merged_scores.get(emotion, 0.0))
+
+        provider = "+".join(provider_names) if provider_names else "unknown"
         return {
             "success": True,
             "emotion": emotion,
-            "confidence": round(max(0.0, min(1.0, confidence)) * 100.0, 4),
+            "confidence": round(max(0.0, min(100.0, confidence_percent)), 4),
             "face_detected": True,
-            "provider": "deepface",
-            "scores": normalized_scores,
+            "provider": provider,
+            "scores": merged_scores,
         }
 
     raise RuntimeError("No emotion model provider is available (FEN/FER/DeepFace)")
