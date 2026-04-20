@@ -10,6 +10,7 @@ from dotenv import load_dotenv
 
 # Import routers
 from routes.detection import router as detection_router
+from routes.emotion import predict_router as emotion_predict_router
 from routes.emotion import router as emotion_router
 from routes.fusion import router as fusion_router
 from routes.history import router as history_router
@@ -35,6 +36,7 @@ app.add_middleware(
 # Include routers
 app.include_router(detection_router, prefix="/api/detection", tags=["Detection"])
 app.include_router(emotion_router, prefix="/api/facial-emotion", tags=["Facial Emotion"])
+app.include_router(emotion_predict_router, prefix="/api/emotion", tags=["Emotion API"])
 app.include_router(fusion_router, prefix="/api/fusion", tags=["Fusion"])
 app.include_router(history_router, prefix="/api/history", tags=["History"])
 app.include_router(training_router, prefix="/api/training", tags=["Training"])
