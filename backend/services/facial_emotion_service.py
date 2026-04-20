@@ -14,6 +14,7 @@ from typing import Any, Dict, List, Optional
 from uuid import uuid4
 
 import cv2
+import mediapipe as mp
 import numpy as np
 
 from services.emotion_detector import (
@@ -51,6 +52,8 @@ _TRAINING_STATE: Dict[str, Any] = {
 }
 _TRAINING_LOCK = threading.Lock()
 
+_mp_face_detection = mp.solutions.face_detection
+
 
 def _utc_now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
@@ -77,6 +80,56 @@ def _decode_base64_image(image_base64: str) -> bytes:
     """Decode a base64 string, allowing data URLs."""
     payload = image_base64.split(",", 1)[-1]
     return base64.b64decode(payload)
+
+
+def _detect_face_region_mediapipe(image_bgr: np.ndarray) -> Optional[Dict[str, int]]:
+    """Detect the first face bounding box using MediaPipe Face Detection."""
+    image_rgb = cv2.cvtColor(image_bgr, cv2.COLOR_BGR2RGB)
+    h, w = image_bgr.shape[:2]
+
+    with _mp_face_detection.FaceDetection(
+        model_selection=0,
+        min_detection_confidence=0.5,
+    ) as detector:
+        result = detector.process(image_rgb)
+
+    if not result.detections:
+        return None
+
+    bbox = result.detections[0].location_data.relative_bounding_box
+    x = max(0, int(bbox.xmin * w))
+    y = max(0, int(bbox.ymin * h))
+    bw = int(bbox.width * w)
+    bh = int(bbox.height * h)
+
+    if bw <= 0 or bh <= 0:
+        return None
+
+    # Clamp to image dimensions.
+    x2 = min(w, x + bw)
+    y2 = min(h, y + bh)
+    x = min(x, x2 - 1)
+    y = min(y, y2 - 1)
+
+    return {
+        "x": x,
+        "y": y,
+        "w": max(1, x2 - x),
+        "h": max(1, y2 - y),
+    }
+
+
+def _preprocess_face_crop(face_bgr: np.ndarray, size: int = 224) -> np.ndarray:
+    """Resize and normalize face crop for model input."""
+    resized = cv2.resize(face_bgr, (size, size), interpolation=cv2.INTER_AREA)
+    return resized.astype(np.float32) / 255.0
+
+
+def _encode_image_to_jpeg_bytes(image_bgr: np.ndarray) -> bytes:
+    ok, encoded = cv2.imencode(".jpg", image_bgr)
+    if not ok:
+        raise ValueError("Failed to encode face crop")
+    return encoded.tobytes()
 
 
 def _normalize_emotion_scores(scores: Dict[str, Any]) -> Dict[str, float]:
@@ -241,6 +294,91 @@ def analyze_facial_emotion(image_bytes: bytes) -> Dict[str, Any]:
 
 def analyze_facial_emotion_from_base64(image_base64: str) -> Dict[str, Any]:
     return analyze_facial_emotion(_decode_base64_image(image_base64))
+
+
+def predict_emotion_pipeline(image_bytes: bytes) -> Dict[str, Any]:
+    """MediaPipe-first emotion prediction pipeline for API responses.
+
+    Flow: decode image -> detect face bbox -> crop + preprocess -> infer emotion.
+    Returns confidence in [0, 1].
+    """
+    image_bgr = _decode_image_bytes(image_bytes)
+    face_region = _detect_face_region_mediapipe(image_bgr)
+
+    if face_region is None:
+        return {
+            "emotion": "neutral",
+            "confidence": 0.0,
+            "face_detected": False,
+        }
+
+    x, y, w, h = face_region["x"], face_region["y"], face_region["w"], face_region["h"]
+    face_crop = image_bgr[y : y + h, x : x + w]
+    if face_crop.size == 0:
+        return {
+            "emotion": "neutral",
+            "confidence": 0.0,
+            "face_detected": False,
+        }
+
+    # Preprocessing step required by the pipeline contract.
+    _ = _preprocess_face_crop(face_crop, size=224)
+
+    # Option B: landmark-based model (FEN)
+    if USE_FEN:
+        fen_result = predict_with_fen(_encode_image_to_jpeg_bytes(face_crop))
+        if fen_result is not None:
+            confidence = float(fen_result.get("confidence", 0.0))
+            if confidence > 1.0:
+                confidence = confidence / 100.0
+            return {
+                "emotion": str(fen_result.get("emotion", "neutral")),
+                "confidence": round(max(0.0, min(1.0, confidence)), 4),
+                "face_detected": bool(fen_result.get("face_detected", True)),
+            }
+
+    # Option A: pretrained FER model fallback on the face crop.
+    face_rgb = cv2.cvtColor(face_crop, cv2.COLOR_BGR2RGB)
+    if FER is not None:
+        detector = FER(mtcnn=False)
+        detections = detector.detect_emotions(face_rgb)
+        if detections:
+            scores = detections[0].get("emotions", {}) or {}
+            if scores:
+                emotion = max(scores, key=scores.get)
+                confidence = float(scores.get(emotion, 0.0))
+                if confidence > 1.0:
+                    confidence = confidence / 100.0
+                return {
+                    "emotion": emotion,
+                    "confidence": round(max(0.0, min(1.0, confidence)), 4),
+                    "face_detected": True,
+                }
+
+    if DeepFace is not None:
+        analysis = DeepFace.analyze(
+            img_path=face_rgb,
+            actions=["emotion"],
+            enforce_detection=False,
+        )
+        if isinstance(analysis, list):
+            analysis = analysis[0] if analysis else {}
+        scores = analysis.get("emotion", {}) or {}
+        emotion = str(analysis.get("dominant_emotion", "neutral"))
+        confidence = float(scores.get(emotion, 0.0))
+        if confidence > 1.0:
+            confidence = confidence / 100.0
+        return {
+            "emotion": emotion,
+            "confidence": round(max(0.0, min(1.0, confidence)), 4),
+            "face_detected": True,
+        }
+
+    raise RuntimeError("No emotion model provider is available (FEN/FER/DeepFace)")
+
+
+def predict_emotion_pipeline_from_base64(image_base64: str) -> Dict[str, Any]:
+    return predict_emotion_pipeline(_decode_base64_image(image_base64))
 
 
 def save_emotion_sample(label: str, image_bytes: bytes) -> Dict[str, Any]:

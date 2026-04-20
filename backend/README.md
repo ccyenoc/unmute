@@ -136,6 +136,35 @@ View dataset statistics.
 
 ### Facial Emotion
 
+#### POST `/api/emotion/predict`
+Unified facial emotion prediction endpoint.
+
+Accepts either:
+- JSON body with base64 frame: `{"image":"<base64_string>"}`
+- Multipart image upload: `file=@face.jpg`
+
+```bash
+# JSON base64 input
+curl -X POST "http://localhost:8000/api/emotion/predict" \
+  -H "Content-Type: application/json" \
+  -d '{"image":"data:image/jpeg;base64,/9j/..."}'
+```
+
+```bash
+# Multipart file input
+curl -X POST "http://localhost:8000/api/emotion/predict" \
+  -F "file=@face.jpg"
+```
+
+**Response:**
+```json
+{
+  "emotion": "happy",
+  "confidence": 0.92,
+  "face_detected": true
+}
+```
+
 #### GET `/api/facial-emotion/health`
 Check whether the emotion service is ready.
 

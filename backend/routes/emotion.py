@@ -6,8 +6,9 @@ Endpoints for analyzing emotion from uploaded images or base64 camera frames.
 from __future__ import annotations
 
 import logging
+import json
 
-from fastapi import APIRouter, BackgroundTasks, File, HTTPException, Query, UploadFile
+from fastapi import APIRouter, BackgroundTasks, File, HTTPException, Query, Request, UploadFile
 from pydantic import BaseModel, Field
 
 from services.facial_emotion_service import (
@@ -22,10 +23,13 @@ from services.facial_emotion_service import (
     run_training_job,
     save_emotion_sample,
     USE_FEN,
+    predict_emotion_pipeline,
+    predict_emotion_pipeline_from_base64,
 )
 from services.emotion_detector import get_fen_model_info
 
 router = APIRouter()
+predict_router = APIRouter()
 logger = logging.getLogger("uvicorn.error")
 
 
@@ -35,6 +39,12 @@ class EmotionFrameRequest(BaseModel):
 
 class EmotionSnapshotRequest(BaseModel):
     image: str = Field(..., description="Base64-encoded image (matches mobile snapshot payload)")
+
+
+class EmotionPredictResponse(BaseModel):
+    emotion: str
+    confidence: float
+    face_detected: bool
 
 
 @router.get("/health")
@@ -102,6 +112,44 @@ def analyze_snapshot(payload: EmotionSnapshotRequest):
             result.get("face_detected"),
         )
         return result
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except RuntimeError as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+
+@predict_router.post("/predict", response_model=EmotionPredictResponse)
+async def predict_emotion(request: Request, file: UploadFile | None = File(default=None)):
+    """Predict emotion from either JSON base64 payload or uploaded image file.
+
+    Supported inputs:
+    - application/json: {"image": "<base64>"}
+    - multipart/form-data: file=<image>
+    """
+    try:
+        if file is not None:
+            if not file.content_type or not file.content_type.startswith("image/"):
+                raise HTTPException(status_code=400, detail="Uploaded file must be an image")
+            image_bytes = await file.read()
+            return predict_emotion_pipeline(image_bytes)
+
+        raw_body = await request.body()
+        if not raw_body:
+            raise HTTPException(
+                status_code=400,
+                detail="Provide either an image file or JSON body with 'image' base64 field",
+            )
+
+        try:
+            payload = json.loads(raw_body.decode("utf-8"))
+        except Exception as exc:
+            raise HTTPException(status_code=400, detail="Invalid JSON payload") from exc
+
+        image_base64 = payload.get("image")
+        if not image_base64 or not isinstance(image_base64, str):
+            raise HTTPException(status_code=400, detail="JSON payload must include 'image' base64 string")
+
+        return predict_emotion_pipeline_from_base64(image_base64)
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
     except RuntimeError as exc:
