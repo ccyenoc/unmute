@@ -1,28 +1,29 @@
 import { Colors } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import {
-  analyzeEmotionFromBase64,
-  checkFacialApiHealth,
-  EmotionAnalysisResponse,
-  FusionResponse,
-  interpretFusion,
+    analyzeEmotionFromBase64,
+    checkFacialApiHealth,
+    EmotionAnalysisResponse,
+    FusionResponse,
+    getEmotionModelInfo,
+    interpretFusion,
 } from '@/utils/facialEmotionService';
 import { FacialEmotionSnapshot, simulateSignTranslation, storeTranslation } from '@/utils/translationService';
 import { useFocusEffect } from '@react-navigation/native';
 import { CameraView, useCameraPermissions } from 'expo-camera';
 import React, { useCallback, useRef, useState } from 'react';
 import {
-  ActivityIndicator,
-  Alert,
-  Dimensions,
-  PanResponder,
-  SafeAreaView,
-  ScrollView,
-  StyleSheet,
-  Text,
-  TouchableOpacity,
-  View,
+    ActivityIndicator,
+    Alert,
+    Dimensions,
+    PanResponder,
+    ScrollView,
+    StyleSheet,
+    Text,
+    TouchableOpacity,
+    View,
 } from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
 
 export default function TranslatorScreen() {
   const colorScheme = useColorScheme() ?? 'light';
@@ -40,9 +41,30 @@ export default function TranslatorScreen() {
   const [emotionResult, setEmotionResult] = useState<EmotionAnalysisResponse | null>(null);
   const [fusionResult, setFusionResult] = useState<FusionResponse | null>(null);
   const [apiConnected, setApiConnected] = useState<boolean | null>(null);
+  const [fenReady, setFenReady] = useState<boolean | null>(null);
+  const [fenModelMessage, setFenModelMessage] = useState<string | null>(null);
   const [backendStatusLabel, setBackendStatusLabel] = useState('Checking...');
   const [isProcessing, setIsProcessing] = useState(false);
   const cameraRef = useRef<CameraView>(null);
+
+  const createFallbackEmotionResult = (message: string): EmotionAnalysisResponse => ({
+    success: false,
+    face_detected: false,
+    faces_detected: 0,
+    provider: 'fen',
+    emotion: 'neutral',
+    confidence: 0,
+    scores: {
+      angry: 0,
+      disgust: 0,
+      fear: 0,
+      happy: 0,
+      neutral: 0,
+      sad: 0,
+      surprise: 0,
+    },
+    message,
+  });
 
   const clamp = (value: number, min: number, max: number) => Math.min(Math.max(value, min), max);
 
@@ -154,18 +176,24 @@ export default function TranslatorScreen() {
 
       setBackendStatusLabel('Checking...');
       setApiConnected(null);
+      setFenReady(null);
+      setFenModelMessage(null);
 
-      checkFacialApiHealth()
-        .then((ok) => {
+      Promise.all([checkFacialApiHealth(), getEmotionModelInfo()])
+        .then(([ok, modelInfo]) => {
           if (mounted) {
             setApiConnected(ok);
             setBackendStatusLabel(ok ? 'Connected' : 'Disconnected');
+            setFenReady(modelInfo.fen_model.ready);
+            setFenModelMessage(modelInfo.fen_model.message ?? null);
           }
         })
         .catch(() => {
           if (mounted) {
             setApiConnected(false);
             setBackendStatusLabel('Disconnected');
+            setFenReady(false);
+            setFenModelMessage('Unable to read FEN model status');
           }
         });
 
@@ -188,20 +216,21 @@ export default function TranslatorScreen() {
 
     setIsRecording(true);
     setTranslation(null);
-    setEmotionResult(null);
+    setEmotionResult(createFallbackEmotionResult('Reading facial expression...'));
     setFusionResult(null);
     setIsProcessing(true);
 
     try {
-      // Keep a short delay for recording UX before capturing a frame.
-      await new Promise((resolve) => setTimeout(resolve, 1200));
+      const translationPromise = simulateSignTranslation();
+      // Give the camera a tiny moment to settle, but avoid a long blocking delay.
+      await new Promise((resolve) => setTimeout(resolve, 120));
       const snapshot = await cameraRef.current.takePictureAsync({
         base64: true,
-        quality: 0.5,
-        skipProcessing: true,
+        quality: 0.85,
+        skipProcessing: false,
       });
 
-      const result = await simulateSignTranslation();
+      const result = await translationPromise;
       setTranslation(result);
       let historyEmotionSnapshot: FacialEmotionSnapshot | null = null;
 
@@ -231,7 +260,7 @@ export default function TranslatorScreen() {
             }
           }
         } catch {
-          setEmotionResult(null);
+          setEmotionResult(createFallbackEmotionResult('Facial expression API unavailable.'));
           setFusionResult(null);
         }
       }
@@ -258,7 +287,7 @@ export default function TranslatorScreen() {
   };
 
   const renderEmotionOverlay = () => {
-    if (!emotionResult) {
+    if (isRecording || !emotionResult) {
       return null;
     }
 
@@ -311,6 +340,12 @@ export default function TranslatorScreen() {
             <Text style={styles.metaPillValue}>{payload.confidence}</Text>
           </View>
         </View>
+
+        {emotionResult.message ? (
+          <View style={styles.emotionNoticeBox}>
+            <Text style={styles.emotionNoticeText}>{emotionResult.message}</Text>
+          </View>
+        ) : null}
 
         <ScrollView
           style={styles.emotionOverlayScroll}
@@ -376,15 +411,26 @@ export default function TranslatorScreen() {
       <View style={styles.controlsContainer}>
         <View style={[styles.backendStatus, { borderColor: Colors[colorScheme].tabIconDefault }]}> 
           <Text style={[styles.backendStatusLabel, { color: Colors[colorScheme].tabIconDefault }]}>Backend</Text>
-          <Text
-            style={[
-              styles.backendStatusValue,
-              { color: apiConnected ? '#22A06B' : apiConnected === false ? '#D92D20' : Colors[colorScheme].text },
-            ]}
-          >
-            {backendStatusLabel}
-          </Text>
+          <View style={{ alignItems: 'flex-end' }}>
+            <Text
+              style={[
+                styles.backendStatusValue,
+                { color: apiConnected ? '#22A06B' : apiConnected === false ? '#D92D20' : Colors[colorScheme].text },
+              ]}
+            >
+              {backendStatusLabel}
+            </Text>
+            <Text style={[styles.backendStatusSubValue, { color: fenReady ? '#22A06B' : '#D92D20' }]}> 
+              {fenReady ? 'FEN Ready' : 'FEN Not Ready'}
+            </Text>
+          </View>
         </View>
+
+        {fenModelMessage ? (
+          <Text style={[styles.fenStatusMessage, { color: Colors[colorScheme].tabIconDefault }]}> 
+            {fenModelMessage}
+          </Text>
+        ) : null}
 
         {isProcessing ? (
           <View style={styles.processingContainer}>
@@ -474,6 +520,8 @@ const styles = StyleSheet.create({
     borderColor: 'rgba(255,255,255,0.15)',
     padding: 12,
     boxShadow: '0px 8px 18px rgba(0, 0, 0, 0.28)',
+    zIndex: 30,
+    elevation: 30,
   },
   emotionOverlayHeader: {
     flexDirection: 'row',
@@ -560,6 +608,21 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
     alignItems: 'center',
   },
+  emotionNoticeBox: {
+    marginTop: 8,
+    paddingHorizontal: 10,
+    paddingVertical: 8,
+    borderRadius: 10,
+    backgroundColor: 'rgba(255, 149, 0, 0.12)',
+    borderWidth: 1,
+    borderColor: 'rgba(255, 149, 0, 0.25)',
+  },
+  emotionNoticeText: {
+    color: '#FFB24D',
+    fontSize: 11,
+    lineHeight: 15,
+    fontWeight: '600',
+  },
   dragHint: {
     color: 'rgba(233, 240, 255, 0.8)',
     fontSize: 10,
@@ -600,6 +663,16 @@ const styles = StyleSheet.create({
   backendStatusValue: {
     fontSize: 13,
     fontWeight: '700',
+  },
+  backendStatusSubValue: {
+    fontSize: 11,
+    fontWeight: '700',
+    marginTop: 2,
+  },
+  fenStatusMessage: {
+    fontSize: 12,
+    marginBottom: 12,
+    lineHeight: 16,
   },
   processingContainer: {
     alignItems: 'center',

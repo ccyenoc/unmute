@@ -11,6 +11,8 @@ This module implements the custom facial pipeline:
 from __future__ import annotations
 
 import json
+import os
+from functools import lru_cache
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
@@ -18,18 +20,26 @@ from typing import Any, Dict, List, Optional, Tuple
 import cv2
 import mediapipe as mp
 import numpy as np
+from keras.models import load_model as keras_load_model
 from tensorflow.keras import Sequential
 from tensorflow.keras.layers import Dense, Dropout, Input
-from tensorflow.keras.models import load_model
+from tensorflow.keras.models import load_model as tf_load_model
 from tensorflow.keras.utils import to_categorical
 
 EMOTION_LABELS = ["angry", "disgust", "fear", "happy", "sad", "surprise", "neutral"]
+DEFAULT_FEN_LABELS = ["angry", "disgust", "fear", "happy", "neutral", "sad", "surprise"]
+FACE_EXPAND_RATIO = float(os.getenv("FEN_FACE_EXPAND_RATIO", "0.2"))
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 DATASET_DIR = BASE_DIR / "data" / "emotion_dataset"
 MODELS_DIR = BASE_DIR / "models"
-MODEL_PATH = MODELS_DIR / "emotion_fen_model.h5"
-META_PATH = MODELS_DIR / "emotion_fen_model_meta.json"
+MODEL_PATH = Path(os.getenv("FEN_MODEL_PATH", str(MODELS_DIR / "emotion_fen_model.h5")))
+META_PATH = Path(os.getenv("FEN_META_PATH", str(MODELS_DIR / "emotion_fen_model_meta.json")))
+MODEL_CANDIDATES = [
+    MODEL_PATH,
+    MODELS_DIR / "fen_model.h5",
+    MODELS_DIR / "emotion_fen_model.h5",
+]
 
 mp_face_mesh = mp.solutions.face_mesh
 
@@ -50,12 +60,232 @@ def ensure_dirs() -> None:
         (DATASET_DIR / label).mkdir(parents=True, exist_ok=True)
 
 
+def _resolve_existing_model_path() -> Optional[Path]:
+    for candidate in MODEL_CANDIDATES:
+        if candidate.exists():
+            return candidate
+    return None
+
+
+def _resolve_meta_path_for_model(model_path: Path) -> Optional[Path]:
+    candidate_names = [
+        META_PATH,
+        model_path.with_name(f"{model_path.stem}_meta.json"),
+        model_path.with_name(f"{model_path.stem}_metadata.json"),
+        model_path.with_suffix(".json"),
+        MODELS_DIR / "fen_model_meta.json",
+        MODELS_DIR / "emotion_fen_model_meta.json",
+        MODELS_DIR / "metadata.json",
+    ]
+    for candidate in candidate_names:
+        if candidate.exists():
+            return candidate
+    return None
+
+
+def _infer_num_classes(model: Any) -> int:
+    try:
+        output_shape = tuple(model.output_shape or ())
+        if len(output_shape) >= 2 and output_shape[-1]:
+            return int(output_shape[-1])
+    except Exception:
+        pass
+    return len(DEFAULT_FEN_LABELS)
+
+
+def _default_labels_for_size(size: int) -> List[str]:
+    if size <= 0:
+        return list(DEFAULT_FEN_LABELS)
+
+    labels = list(DEFAULT_FEN_LABELS)
+    if size <= len(labels):
+        return labels[:size]
+
+    extras_needed = size - len(labels)
+    extras = [label for label in EMOTION_LABELS if label not in labels]
+    labels.extend(extras[:extras_needed])
+    if len(labels) < size:
+        labels.extend([f"class_{idx}" for idx in range(len(labels), size)])
+    return labels
+
+
+def _extract_labels_from_meta(meta: Dict[str, Any], num_classes: int) -> Optional[List[str]]:
+    candidate_keys = ["labels", "label_map", "idx_to_label", "classes", "class_names"]
+
+    for key in candidate_keys:
+        value = meta.get(key)
+
+        if isinstance(value, list) and value:
+            labels = [str(item).strip().lower() for item in value]
+        elif isinstance(value, dict) and value:
+            labels = []
+            if all(str(k).isdigit() for k in value.keys()):
+                labels = [str(value[str(idx)]).strip().lower() for idx in sorted(int(k) for k in value.keys())]
+            elif all(isinstance(v, int) for v in value.values()):
+                inverse = {int(v): str(k).strip().lower() for k, v in value.items()}
+                labels = [inverse[idx] for idx in sorted(inverse.keys())]
+            else:
+                labels = [str(item).strip().lower() for item in value.values()]
+        else:
+            continue
+
+        labels = [label for label in labels if label]
+        if not labels:
+            continue
+
+        if num_classes > 0:
+            if len(labels) < num_classes:
+                defaults = _default_labels_for_size(num_classes)
+                labels.extend(defaults[len(labels) : num_classes])
+            else:
+                labels = labels[:num_classes]
+
+        return labels
+
+    return None
+
+
+def _create_generated_meta_if_missing(model_path: Path, labels: List[str], input_mode: str) -> Optional[Path]:
+    meta_path = model_path.with_name(f"{model_path.stem}_meta.json")
+    if meta_path.exists():
+        return meta_path
+
+    payload = {
+        "model_path": str(model_path.relative_to(BASE_DIR)),
+        "labels": {str(idx): label for idx, label in enumerate(labels)},
+        "input_mode": input_mode,
+        "generated": True,
+        "saved_at": datetime.utcnow().isoformat() + "Z",
+    }
+    try:
+        meta_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+        return meta_path
+    except Exception:
+        return None
+
+
+def _expand_face_region(region: Dict[str, int], image_width: int, image_height: int, ratio: float) -> Dict[str, int]:
+    x, y, w, h = region["x"], region["y"], region["w"], region["h"]
+    if ratio <= 0:
+        return {"x": x, "y": y, "w": w, "h": h}
+
+    expand_w = int(w * ratio)
+    expand_h = int(h * ratio)
+
+    x1 = max(0, x - expand_w)
+    y1 = max(0, y - expand_h)
+    x2 = min(image_width, x + w + expand_w)
+    y2 = min(image_height, y + h + expand_h)
+
+    return {
+        "x": x1,
+        "y": y1,
+        "w": max(1, x2 - x1),
+        "h": max(1, y2 - y1),
+    }
+
+
+def _prepare_image_model_input(image_bgr: np.ndarray, input_shape: Tuple[Any, ...]) -> np.ndarray:
+    height = int(input_shape[1]) if len(input_shape) > 1 and input_shape[1] else 48
+    width = int(input_shape[2]) if len(input_shape) > 2 and input_shape[2] else 48
+    channels = int(input_shape[3]) if len(input_shape) > 3 and input_shape[3] else 1
+
+    if channels == 1:
+        gray = cv2.cvtColor(image_bgr, cv2.COLOR_BGR2GRAY)
+        # Improve contrast in low-light frames to avoid flat predictions.
+        clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8))
+        gray = clahe.apply(gray)
+        face = cv2.resize(gray, (width, height), interpolation=cv2.INTER_AREA).astype(np.float32) / 255.0
+        return np.expand_dims(face, axis=(0, -1))
+
+    rgb = cv2.cvtColor(image_bgr, cv2.COLOR_BGR2RGB)
+    face = cv2.resize(rgb, (width, height), interpolation=cv2.INTER_AREA).astype(np.float32) / 255.0
+    return np.expand_dims(face, axis=0)
+
+
+@lru_cache(maxsize=1)
+def _load_model_artifacts() -> Optional[Dict[str, Any]]:
+    model_path = _resolve_existing_model_path()
+    if model_path is None:
+        return None
+
+    try:
+        model = keras_load_model(model_path, compile=False)
+    except Exception:
+        model = tf_load_model(model_path, compile=False)
+    meta_path = _resolve_meta_path_for_model(model_path)
+
+    num_classes = _infer_num_classes(model)
+    labels = _default_labels_for_size(num_classes)
+    if meta_path is not None:
+        try:
+            meta = json.loads(meta_path.read_text(encoding="utf-8"))
+            extracted_labels = _extract_labels_from_meta(meta, num_classes)
+            if extracted_labels:
+                labels = extracted_labels
+        except Exception:
+            pass
+
+    input_shape = tuple(model.input_shape or ())
+    input_mode = "landmark"
+    if len(input_shape) >= 4:
+        input_mode = "image"
+
+    if meta_path is None:
+        meta_path = _create_generated_meta_if_missing(model_path, labels, input_mode)
+
+    return {
+        "model": model,
+        "model_path": model_path,
+        "meta_path": meta_path,
+        "labels": labels,
+        "input_mode": input_mode,
+        "input_shape": input_shape,
+    }
+
+
 def decode_image_bytes(image_bytes: bytes) -> np.ndarray:
     image_array = np.frombuffer(image_bytes, dtype=np.uint8)
     image_bgr = cv2.imdecode(image_array, cv2.IMREAD_COLOR)
     if image_bgr is None:
         raise ValueError("Could not decode image bytes")
     return image_bgr
+
+
+def _detect_face_region_mediapipe(image_bgr: np.ndarray) -> Optional[Dict[str, int]]:
+    """Detect the first face bounding box using MediaPipe Face Detection."""
+    image_rgb = cv2.cvtColor(image_bgr, cv2.COLOR_BGR2RGB)
+    height, width = image_bgr.shape[:2]
+
+    with mp.solutions.face_detection.FaceDetection(
+        model_selection=0,
+        min_detection_confidence=0.5,
+    ) as detector:
+        result = detector.process(image_rgb)
+
+    if not result.detections:
+        return None
+
+    bbox = result.detections[0].location_data.relative_bounding_box
+    x = max(0, int(bbox.xmin * width))
+    y = max(0, int(bbox.ymin * height))
+    box_width = int(bbox.width * width)
+    box_height = int(bbox.height * height)
+
+    if box_width <= 0 or box_height <= 0:
+        return None
+
+    x2 = min(width, x + box_width)
+    y2 = min(height, y + box_height)
+    x = min(x, x2 - 1)
+    y = min(y, y2 - 1)
+
+    return {
+        "x": x,
+        "y": y,
+        "w": max(1, x2 - x),
+        "h": max(1, y2 - y),
+    }
 
 
 def extract_face_features(image_bgr: np.ndarray) -> Optional[np.ndarray]:
@@ -164,6 +394,12 @@ def train_fen_model(epochs: int = 30, batch_size: int = 32) -> Dict[str, Any]:
 
     num_classes = len(idx_to_label)
     y_cat = to_categorical(y, num_classes=num_classes)
+    class_counts = np.bincount(y, minlength=num_classes)
+    max_count = int(np.max(class_counts)) if len(class_counts) else 1
+    class_weight = {
+        idx: float(max_count / max(1, int(count)))
+        for idx, count in enumerate(class_counts)
+    }
 
     model = Sequential(
         [
@@ -184,6 +420,7 @@ def train_fen_model(epochs: int = 30, batch_size: int = 32) -> Dict[str, Any]:
         validation_split=0.2,
         epochs=epochs,
         batch_size=batch_size,
+        class_weight=class_weight,
         verbose=0,
     )
 
@@ -197,64 +434,110 @@ def train_fen_model(epochs: int = 30, batch_size: int = 32) -> Dict[str, Any]:
         "batch_size": batch_size,
         "samples": int(X.shape[0]),
         "saved_at": datetime.utcnow().isoformat() + "Z",
+        "class_weight": class_weight,
         "final_train_loss": float(history.history["loss"][-1]),
         "final_train_accuracy": float(history.history["accuracy"][-1]),
         "final_val_loss": float(history.history["val_loss"][-1]),
         "final_val_accuracy": float(history.history["val_accuracy"][-1]),
     }
     META_PATH.write_text(json.dumps(meta, indent=2), encoding="utf-8")
+    _load_model_artifacts.cache_clear()
 
     return meta
 
 
 def get_fen_model_info() -> Dict[str, Any]:
     ensure_dirs()
-    if not MODEL_PATH.exists() or not META_PATH.exists():
+    model_path = _resolve_existing_model_path()
+    if model_path is None:
         return {
             "ready": False,
             "model_path": str(MODEL_PATH.relative_to(BASE_DIR)),
+            "metadata_source": "missing",
             "message": "FEN model not trained yet",
         }
 
-    meta = json.loads(META_PATH.read_text(encoding="utf-8"))
+    artifacts = _load_model_artifacts()
+    if artifacts is None:
+        return {
+            "ready": True,
+            "model_path": str(model_path.relative_to(BASE_DIR)),
+            "input_mode": "image",
+            "labels": DEFAULT_FEN_LABELS,
+            "metadata_source": "default",
+            "message": "FEN model found without metadata; using default label order",
+        }
+
+    meta_path = artifacts["meta_path"]
+    if meta_path is None:
+        return {
+            "ready": True,
+            "model_path": str(model_path.relative_to(BASE_DIR)),
+            "input_mode": artifacts["input_mode"],
+            "labels": artifacts["labels"],
+            "metadata_source": "default",
+            "message": "FEN model found without metadata; using default label order",
+        }
+
+    meta = json.loads(meta_path.read_text(encoding="utf-8"))
+    metadata_source = "generated" if bool(meta.get("generated")) else "training"
     return {
         "ready": True,
         **meta,
+        "model_path": str(model_path.relative_to(BASE_DIR)),
+        "metadata_source": metadata_source,
     }
 
 
 def predict_with_fen(image_bytes: bytes) -> Optional[Dict[str, Any]]:
-    if not MODEL_PATH.exists() or not META_PATH.exists():
+    artifacts = _load_model_artifacts()
+    if artifacts is None:
         return None
 
+    model = artifacts["model"]
+    labels = list(artifacts["labels"])
+    input_mode = artifacts["input_mode"]
+
     image_bgr = decode_image_bytes(image_bytes)
-    feat = extract_face_features(image_bgr)
-    if feat is None:
-        return {
-            "success": True,
-            "face_detected": False,
-            "emotion": "neutral",
-            "confidence": 0.0,
-            "scores": {label: 0.0 for label in EMOTION_LABELS},
-            "provider": "fen",
-            "message": "No face detected",
-        }
+    face_region = _detect_face_region_mediapipe(image_bgr)
+    if face_region is not None:
+        height, width = image_bgr.shape[:2]
+        expanded = _expand_face_region(face_region, width, height, FACE_EXPAND_RATIO)
+        x, y, w, h = expanded["x"], expanded["y"], expanded["w"], expanded["h"]
+        image_bgr = image_bgr[y : y + h, x : x + w]
 
-    model = load_model(MODEL_PATH)
-    meta = json.loads(META_PATH.read_text(encoding="utf-8"))
-    idx_to_label = {int(k): v for k, v in meta["labels"].items()}
+    if input_mode == "landmark":
+        feat = extract_face_features(image_bgr)
+        if feat is None:
+            return {
+                "success": True,
+                "face_detected": False,
+                "emotion": "neutral",
+                "confidence": 0.0,
+                "scores": {label: 0.0 for label in EMOTION_LABELS},
+                "provider": "fen",
+                "message": "No face detected",
+            }
 
-    probs = model.predict(np.expand_dims(feat, axis=0), verbose=0)[0]
+        model_input = np.expand_dims(feat, axis=0)
+        face_detected = True
+    else:
+        input_shape = tuple(model.input_shape or ())
+        model_input = _prepare_image_model_input(image_bgr, input_shape)
+        face_detected = True
+
+    probs = model.predict(model_input, verbose=0)[0]
     best_idx = int(np.argmax(probs))
-    emotion = idx_to_label.get(best_idx, "neutral")
+    emotion = labels[best_idx] if best_idx < len(labels) else "neutral"
 
     scores = {label: 0.0 for label in EMOTION_LABELS}
-    for idx, label in idx_to_label.items():
-        scores[label] = round(float(probs[idx] * 100.0), 4)
+    for idx, label in enumerate(labels):
+        if idx < len(probs) and label in scores:
+            scores[label] = round(float(probs[idx] * 100.0), 4)
 
     return {
         "success": True,
-        "face_detected": True,
+        "face_detected": face_detected,
         "faces_detected": 1,
         "emotion": emotion,
         "confidence": round(float(probs[best_idx] * 100.0), 4),

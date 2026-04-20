@@ -1,23 +1,23 @@
 import { Colors } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import {
-  clearHistory,
-  deleteTranslation,
-  getTranslationHistory,
-  TranslationRecord,
+    clearHistory,
+    deleteTranslation,
+    getTranslationHistory,
+    TranslationRecord,
 } from '@/utils/translationService';
 import { useFocusEffect } from '@react-navigation/native';
 import React, { useState } from 'react';
 import {
-  ActivityIndicator,
-  Alert,
-  FlatList,
-  SafeAreaView,
-  StyleSheet,
-  Text,
-  TouchableOpacity,
-  View,
+    ActivityIndicator,
+    Alert,
+    FlatList,
+    StyleSheet,
+    Text,
+    TouchableOpacity,
+    View,
 } from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
 
 export default function HistoryScreen() {
   const colorScheme = useColorScheme() ?? 'light';

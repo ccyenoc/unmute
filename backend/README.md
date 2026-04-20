@@ -36,6 +36,37 @@ uvicorn app:app --reload --host 0.0.0.0 --port 8000
 Backend URL: **http://localhost:8000**
 Swagger docs: **http://localhost:8000/docs**
 
+### Colab-Ready Facial API
+
+If you want to run only the facial expression API from Google Colab or as a standalone service, use:
+
+```bash
+python colab_facial_emotion_api.py
+```
+
+By default this runs on port `8001` so it can sit next to the main backend on `8000`.
+
+If your trained FEN model lives somewhere else, set:
+
+```bash
+FEN_MODEL_PATH=/path/to/emotion_fen_model.h5
+FEN_META_PATH=/path/to/emotion_fen_model_meta.json
+```
+
+The backend also auto-detects common filenames inside `backend/models/`, including `fen_model.h5` and `emotion_fen_model.h5`.
+
+It exposes:
+
+```bash
+POST /predict-emotion
+GET /health
+GET /model-info
+```
+
+The frontend client is already set up to try this route as a fallback.
+
+If you are running the Colab API locally, the frontend will also try port `8001` on the same host before falling back to the remote backend URL.
+
 ### 1. Prerequisites
 
 - Python 3.8+
