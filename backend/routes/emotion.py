@@ -8,6 +8,7 @@ from __future__ import annotations
 import base64
 import logging
 import json
+from datetime import datetime, timezone
 
 from fastapi import APIRouter, BackgroundTasks, File, HTTPException, Query, Request, UploadFile
 from pydantic import BaseModel, Field
@@ -32,6 +33,15 @@ from services.emotion_detector import get_fen_model_info
 router = APIRouter()
 predict_router = APIRouter()
 logger = logging.getLogger("uvicorn.error")
+_LAST_FACIAL_DEBUG: dict | None = None
+
+
+def _set_last_facial_debug(payload: dict) -> None:
+    global _LAST_FACIAL_DEBUG
+    _LAST_FACIAL_DEBUG = {
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+        **payload,
+    }
 
 
 class EmotionFrameRequest(BaseModel):
@@ -76,6 +86,20 @@ def emotion_model_info() -> dict:
             "fer": FER is not None,
         },
         "fen_model": get_fen_model_info(),
+    }
+
+
+@router.get("/debug-last")
+def emotion_debug_last() -> dict:
+    if _LAST_FACIAL_DEBUG is None:
+        return {
+            "available": False,
+            "message": "No facial prediction captured yet.",
+        }
+
+    return {
+        "available": True,
+        **_LAST_FACIAL_DEBUG,
     }
 
 
@@ -128,6 +152,15 @@ def analyze_snapshot(payload: EmotionSnapshotRequest):
         }
         if not face_detected:
             result["message"] = "No face detected"
+
+        _set_last_facial_debug(
+            {
+                "request_image_base64_length": len(payload.image or ""),
+                "pipeline": pipeline,
+                "response": result,
+            }
+        )
+
         logger.warning(
             "FACIAL_API result: emotion=%s confidence=%s provider=%s face_detected=%s",
             result.get("emotion"),
