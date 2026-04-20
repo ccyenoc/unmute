@@ -1,8 +1,9 @@
 // https://docs.expo.dev/guides/using-eslint/
-const expoConfig = require('eslint-config-expo/flat');
+const path = require('path');
+const expoConfig = require(path.join(__dirname, 'frontend/node_modules/eslint-config-expo/flat'));
 
 module.exports = [
-  expoConfig,
+  ...expoConfig,
   {
     ignores: ['dist/*'],
   },
