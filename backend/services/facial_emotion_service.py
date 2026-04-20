@@ -52,6 +52,8 @@ FEN_ONLY_MODE = os.getenv("FEN_ONLY_MODE", "true").strip().lower() == "true"
 FEN_SMILE_OVERRIDE_STRONG = float(os.getenv("FEN_SMILE_OVERRIDE_STRONG", "80.0"))
 FEN_SMILE_OVERRIDE_SOFT = float(os.getenv("FEN_SMILE_OVERRIDE_SOFT", "65.0"))
 FEN_SMILE_GAP_MAX = float(os.getenv("FEN_SMILE_GAP_MAX", "35.0"))
+FEN_SMILE_MIN_CONFIDENCE_PERCENT = float(os.getenv("FEN_SMILE_MIN_CONFIDENCE_PERCENT", "20.0"))
+FEN_SMILE_HAPPY_MIN_SCORE = float(os.getenv("FEN_SMILE_HAPPY_MIN_SCORE", "12.0"))
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 EMOTION_DATASET_DIR = BASE_DIR / "data" / "emotion_dataset"
@@ -403,29 +405,18 @@ def predict_emotion_pipeline(image_bytes: bytes) -> Dict[str, Any]:
             model_emotion = str(fen_result.get("model_emotion", fen_emotion))
             smile_score = float(fen_result.get("smile_score", 0.0))
 
-            chosen_emotion = max(scores, key=scores.get) if scores else fen_emotion
-            happy_score = float(scores.get("happy", 0.0))
-            sad_score = float(scores.get("sad", 0.0))
-            if smile_score >= FEN_SMILE_OVERRIDE_STRONG and sad_score <= 70.0:
-                chosen_emotion = "happy"
-            elif (
-                smile_score >= FEN_SMILE_OVERRIDE_SOFT
-                and (sad_score - happy_score) <= FEN_SMILE_GAP_MAX
-                and happy_score >= 4.0
-            ):
-                chosen_emotion = "happy"
-
-            chosen_confidence = float(scores.get(chosen_emotion, confidence_percent))
-            chosen_confidence = round(max(0.0, min(100.0, chosen_confidence)), 4)
+            selected_emotion = max(scores, key=scores.get) if scores else fen_emotion
+            selected_confidence = float(scores.get(selected_emotion, confidence_percent))
+            selected_confidence = round(max(0.0, min(100.0, selected_confidence)), 4)
 
             # Use FEN directly, but preserve the model label even when confidence is modest.
             if confidence_percent >= FEN_MIN_CONFIDENCE_PERCENT:
                 return {
                     "success": True,
-                    "emotion": chosen_emotion,
+                    "emotion": selected_emotion,
                     "model_emotion": model_emotion,
                     "smile_score": smile_score,
-                    "confidence": chosen_confidence,
+                    "confidence": selected_confidence,
                     "face_detected": bool(fen_result.get("face_detected", True)),
                     "provider": "fen",
                     "scores": scores,
@@ -434,14 +425,14 @@ def predict_emotion_pipeline(image_bytes: bytes) -> Dict[str, Any]:
             if confidence_percent > 0:
                 return {
                     "success": True,
-                    "emotion": chosen_emotion,
+                    "emotion": selected_emotion,
                     "model_emotion": model_emotion,
                     "smile_score": smile_score,
-                    "confidence": chosen_confidence,
+                    "confidence": selected_confidence,
                     "face_detected": bool(fen_result.get("face_detected", True)),
                     "provider": "fen",
                     "scores": scores,
-                    "message": "FEN confidence is low; selected the strongest emotion from model scores.",
+                    "message": "FEN confidence is low; emotion follows the highest score.",
                 }
 
             if FEN_STRICT_MODE:
