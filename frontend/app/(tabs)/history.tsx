@@ -145,35 +145,56 @@ export default function HistoryScreen() {
                 },
               ]}
             >
-              <Text style={[styles.detailsTitle, { color: Colors[colorScheme].text }]}>Selected Translation</Text>
-              <Text style={[styles.detailsTranslationText, { color: Colors[colorScheme].text }]}>
-                {selectedRecord.text}
-              </Text>
-              <Text style={[styles.detailsDateText, { color: Colors[colorScheme].tabIconDefault }]}>
-                {selectedRecord.date}
-              </Text>
+              <View style={styles.panelHeaderRow}>
+                <Text style={[styles.detailsTitle, { color: Colors[colorScheme].text }]}>Session Details</Text>
+                <Text style={[styles.detailsDateText, { color: Colors[colorScheme].tabIconDefault }]}> 
+                  {selectedRecord.date}
+                </Text>
+              </View>
+
+              <View style={styles.translationCard}>
+                <Text style={styles.sectionLabel}>Translation</Text>
+                <Text style={[styles.detailsTranslationText, { color: Colors[colorScheme].text }]}> 
+                  {selectedRecord.text}
+                </Text>
+              </View>
 
               <View style={styles.separator} />
               <Text style={[styles.detailsTitle, { color: Colors[colorScheme].text }]}>Facial Expression API</Text>
 
               {selectedRecord.emotion ? (
-                <>
-                  <Text style={[styles.detailsFieldText, { color: Colors[colorScheme].text }]}> 
-                    Emotion: {selectedRecord.emotion.emotion}
-                  </Text>
-                  <Text style={[styles.detailsFieldText, { color: Colors[colorScheme].text }]}> 
-                    Confidence: {selectedRecord.emotion.confidence}
-                  </Text>
-                  <Text style={[styles.detailsFieldText, { color: Colors[colorScheme].text }]}> 
-                    Faces Detected: {selectedRecord.emotion.faces_detected}
-                  </Text>
-                  <Text style={[styles.detailsFieldText, { color: Colors[colorScheme].text }]}> 
-                    Provider: {selectedRecord.emotion.provider ?? 'unknown'}
-                  </Text>
-                  <Text style={[styles.detailsFieldText, { color: Colors[colorScheme].text }]}> 
-                    Fusion: {selectedRecord.emotion.fusion_status ?? 'aligned'}
-                  </Text>
-                </>
+                <View style={styles.emotionCard}>
+                  <View style={styles.emotionRow}>
+                    <Text style={[styles.fieldLabel, { color: Colors[colorScheme].tabIconDefault }]}>Emotion</Text>
+                    <Text style={[styles.fieldValueStrong, { color: Colors[colorScheme].text }]}> 
+                      {selectedRecord.emotion.emotion}
+                    </Text>
+                  </View>
+                  <View style={styles.emotionRow}>
+                    <Text style={[styles.fieldLabel, { color: Colors[colorScheme].tabIconDefault }]}>Confidence</Text>
+                    <Text style={[styles.fieldValue, { color: Colors[colorScheme].text }]}> 
+                      {selectedRecord.emotion.confidence}
+                    </Text>
+                  </View>
+                  <View style={styles.emotionRow}>
+                    <Text style={[styles.fieldLabel, { color: Colors[colorScheme].tabIconDefault }]}>Faces</Text>
+                    <Text style={[styles.fieldValue, { color: Colors[colorScheme].text }]}> 
+                      {selectedRecord.emotion.faces_detected}
+                    </Text>
+                  </View>
+                  <View style={styles.emotionRow}>
+                    <Text style={[styles.fieldLabel, { color: Colors[colorScheme].tabIconDefault }]}>Provider</Text>
+                    <Text style={[styles.fieldValue, { color: Colors[colorScheme].text }]}> 
+                      {selectedRecord.emotion.provider ?? 'unknown'}
+                    </Text>
+                  </View>
+                  <View style={styles.emotionRowLast}>
+                    <Text style={[styles.fieldLabel, { color: Colors[colorScheme].tabIconDefault }]}>Fusion</Text>
+                    <Text style={[styles.fieldValue, { color: Colors[colorScheme].text }]}> 
+                      {selectedRecord.emotion.fusion_status ?? 'aligned'}
+                    </Text>
+                  </View>
+                </View>
               ) : (
                 <Text style={[styles.detailsEmptyText, { color: Colors[colorScheme].tabIconDefault }]}>
                   No facial expression data stored for this translation.
@@ -248,32 +269,87 @@ const styles = StyleSheet.create({
   detailsPanel: {
     marginHorizontal: 12,
     marginBottom: 90,
-    borderRadius: 10,
+    borderRadius: 14,
     borderWidth: 1,
-    padding: 12,
+    padding: 14,
+    boxShadow: '0px 8px 18px rgba(0, 0, 0, 0.1)',
+  },
+  panelHeaderRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 10,
   },
   detailsTitle: {
-    fontSize: 13,
+    fontSize: 12,
     fontWeight: '700',
     textTransform: 'uppercase',
-    marginBottom: 8,
+    letterSpacing: 0.5,
+  },
+  translationCard: {
+    borderRadius: 10,
+    paddingVertical: 10,
+    paddingHorizontal: 12,
+    backgroundColor: 'rgba(0, 122, 255, 0.08)',
+    borderWidth: 1,
+    borderColor: 'rgba(0, 122, 255, 0.18)',
+  },
+  sectionLabel: {
+    fontSize: 10,
+    textTransform: 'uppercase',
+    letterSpacing: 0.5,
+    color: '#0A84FF',
+    fontWeight: '700',
+    marginBottom: 6,
   },
   detailsTranslationText: {
-    fontSize: 16,
+    fontSize: 17,
     fontWeight: '600',
+    lineHeight: 23,
   },
   detailsDateText: {
-    marginTop: 4,
-    fontSize: 12,
+    fontSize: 11,
   },
   separator: {
-    marginVertical: 12,
+    marginVertical: 14,
     height: 1,
-    backgroundColor: 'rgba(127,127,127,0.3)',
+    backgroundColor: 'rgba(127,127,127,0.25)',
   },
-  detailsFieldText: {
+  emotionCard: {
+    borderRadius: 10,
+    backgroundColor: 'rgba(17, 24, 39, 0.06)',
+    borderWidth: 1,
+    borderColor: 'rgba(17, 24, 39, 0.12)',
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+  },
+  emotionRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    paddingVertical: 6,
+    borderBottomWidth: 1,
+    borderBottomColor: 'rgba(127,127,127,0.16)',
+  },
+  emotionRowLast: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    paddingVertical: 6,
+  },
+  fieldLabel: {
+    fontSize: 12,
+    fontWeight: '600',
+    textTransform: 'uppercase',
+    letterSpacing: 0.4,
+  },
+  fieldValue: {
     fontSize: 13,
-    marginBottom: 6,
+    fontWeight: '500',
+  },
+  fieldValueStrong: {
+    fontSize: 14,
+    fontWeight: '700',
   },
   detailsEmptyText: {
     fontSize: 13,
