@@ -19,6 +19,7 @@ import numpy as np
 
 from services.emotion_detector import (
     EMOTION_LABELS,
+    FEN_USE_ARGMAX_LABEL,
     get_dataset_info as get_fen_dataset_info,
     get_fen_model_info,
     predict_with_fen,
@@ -46,7 +47,8 @@ USE_FEN = os.getenv("USE_FEN", "true").strip().lower() == "true"
 NEUTRAL_OVERRIDE_MARGIN = float(os.getenv("NEUTRAL_OVERRIDE_MARGIN", "45.0"))
 NEUTRAL_OVERRIDE_MIN_SCORE = float(os.getenv("NEUTRAL_OVERRIDE_MIN_SCORE", "1.0"))
 FEN_MIN_CONFIDENCE_PERCENT = float(os.getenv("FEN_MIN_CONFIDENCE_PERCENT", "35.0"))
-FEN_STRICT_MODE = os.getenv("FEN_STRICT_MODE", "false").strip().lower() == "true"
+FEN_STRICT_MODE = os.getenv("FEN_STRICT_MODE", "true").strip().lower() == "true"
+FEN_ONLY_MODE = os.getenv("FEN_ONLY_MODE", "true").strip().lower() == "true"
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 EMOTION_DATASET_DIR = BASE_DIR / "data" / "emotion_dataset"
@@ -366,26 +368,20 @@ def predict_emotion_pipeline(image_bytes: bytes) -> Dict[str, Any]:
     image_bgr = _decode_image_bytes(image_bytes)
     face_region = _detect_face_region_mediapipe(image_bgr)
 
-    if face_region is None:
-        return {
-            "success": True,
-            "emotion": "neutral",
-            "confidence": 0.0,
-            "face_detected": False,
-            "provider": None,
-            "scores": _normalize_emotion_scores({}),
-        }
+    face_crop = image_bgr
+    if face_region is not None:
+        x, y, w, h = face_region["x"], face_region["y"], face_region["w"], face_region["h"]
+        face_crop = image_bgr[y : y + h, x : x + w]
 
-    x, y, w, h = face_region["x"], face_region["y"], face_region["w"], face_region["h"]
-    face_crop = image_bgr[y : y + h, x : x + w]
     if face_crop.size == 0:
         return {
-            "success": True,
-            "emotion": "neutral",
+            "success": False,
+            "emotion": "unavailable",
             "confidence": 0.0,
             "face_detected": False,
-            "provider": None,
+            "provider": "fen",
             "scores": _normalize_emotion_scores({}),
+            "message": "Invalid face crop",
         }
 
     # Preprocessing step required by the pipeline contract.
@@ -401,7 +397,10 @@ def predict_emotion_pipeline(image_bytes: bytes) -> Dict[str, Any]:
             confidence_percent = round(max(0.0, min(1.0, confidence)) * 100.0, 4)
             scores = _normalize_emotion_percentages(fen_result.get("scores", {}))
             fen_emotion = str(fen_result.get("emotion", "neutral"))
-            chosen_emotion = _choose_emotion_from_scores(scores, fallback=fen_emotion)
+            if FEN_USE_ARGMAX_LABEL:
+                chosen_emotion = str(fen_result.get("model_emotion", fen_emotion))
+            else:
+                chosen_emotion = _choose_emotion_from_scores(scores, fallback=fen_emotion)
             chosen_confidence = float(scores.get(chosen_emotion, confidence_percent))
             chosen_confidence = round(max(0.0, min(100.0, chosen_confidence)), 4)
 
@@ -427,16 +426,38 @@ def predict_emotion_pipeline(image_bytes: bytes) -> Dict[str, Any]:
                     "message": "FEN confidence is low; selected the strongest emotion from model scores.",
                 }
 
+            if FEN_STRICT_MODE:
+                return {
+                    "success": False,
+                    "emotion": "unavailable",
+                    "confidence": confidence_percent,
+                    "face_detected": bool(fen_result.get("face_detected", True)),
+                    "provider": "fen",
+                    "scores": scores,
+                    "message": "FEN confidence is too low.",
+                }
+
         elif FEN_STRICT_MODE:
             return {
                 "success": False,
-                "emotion": "neutral",
+                "emotion": "unavailable",
                 "confidence": 0.0,
                 "face_detected": False,
                 "provider": "fen",
                 "scores": _normalize_emotion_scores({}),
                 "message": "FEN model is not trained yet. Train the model before using facial emotion output.",
             }
+
+    if FEN_ONLY_MODE:
+        return {
+            "success": False,
+            "emotion": "unavailable",
+            "confidence": 0.0,
+            "face_detected": bool(face_region is not None),
+            "provider": "fen",
+            "scores": _normalize_emotion_scores({}),
+            "message": "FEN-only mode is enabled and FEN result is unavailable.",
+        }
 
     # Provider consensus fallback on the face crop (FER + DeepFace).
     face_rgb = cv2.cvtColor(face_crop, cv2.COLOR_BGR2RGB)

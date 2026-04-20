@@ -43,28 +43,11 @@ export default function TranslatorScreen() {
   const [apiConnected, setApiConnected] = useState<boolean | null>(null);
   const [fenReady, setFenReady] = useState<boolean | null>(null);
   const [fenModelMessage, setFenModelMessage] = useState<string | null>(null);
+  const [fenMetadataSource, setFenMetadataSource] = useState<string | null>(null);
   const [backendStatusLabel, setBackendStatusLabel] = useState('Checking...');
   const [isProcessing, setIsProcessing] = useState(false);
+  const [emotionErrorMessage, setEmotionErrorMessage] = useState<string | null>(null);
   const cameraRef = useRef<CameraView>(null);
-
-  const createFallbackEmotionResult = (message: string): EmotionAnalysisResponse => ({
-    success: false,
-    face_detected: false,
-    faces_detected: 0,
-    provider: 'fen',
-    emotion: 'neutral',
-    confidence: 0,
-    scores: {
-      angry: 0,
-      disgust: 0,
-      fear: 0,
-      happy: 0,
-      neutral: 0,
-      sad: 0,
-      surprise: 0,
-    },
-    message,
-  });
 
   const clamp = (value: number, min: number, max: number) => Math.min(Math.max(value, min), max);
 
@@ -178,6 +161,7 @@ export default function TranslatorScreen() {
       setApiConnected(null);
       setFenReady(null);
       setFenModelMessage(null);
+      setFenMetadataSource(null);
 
       Promise.all([checkFacialApiHealth(), getEmotionModelInfo()])
         .then(([ok, modelInfo]) => {
@@ -186,6 +170,7 @@ export default function TranslatorScreen() {
             setBackendStatusLabel(ok ? 'Connected' : 'Disconnected');
             setFenReady(modelInfo.fen_model.ready);
             setFenModelMessage(modelInfo.fen_model.message ?? null);
+            setFenMetadataSource(modelInfo.fen_model.metadata_source ?? null);
           }
         })
         .catch(() => {
@@ -194,6 +179,7 @@ export default function TranslatorScreen() {
             setBackendStatusLabel('Disconnected');
             setFenReady(false);
             setFenModelMessage('Unable to read FEN model status');
+            setFenMetadataSource(null);
           }
         });
 
@@ -216,7 +202,8 @@ export default function TranslatorScreen() {
 
     setIsRecording(true);
     setTranslation(null);
-    setEmotionResult(createFallbackEmotionResult('Reading facial expression...'));
+    setEmotionResult(null);
+    setEmotionErrorMessage(null);
     setFusionResult(null);
     setIsProcessing(true);
 
@@ -226,8 +213,8 @@ export default function TranslatorScreen() {
       await new Promise((resolve) => setTimeout(resolve, 120));
       const snapshot = await cameraRef.current.takePictureAsync({
         base64: true,
-        quality: 0.85,
-        skipProcessing: false,
+        quality: 0.35,
+        skipProcessing: true,
       });
 
       const result = await translationPromise;
@@ -238,6 +225,7 @@ export default function TranslatorScreen() {
         try {
           const emotion = await analyzeEmotionFromBase64(snapshot.base64);
           setEmotionResult(emotion);
+          setEmotionErrorMessage(null);
 
           historyEmotionSnapshot = {
             emotion: emotion.emotion,
@@ -259,8 +247,15 @@ export default function TranslatorScreen() {
               setFusionResult(null);
             }
           }
-        } catch {
-          setEmotionResult(createFallbackEmotionResult('Facial expression API unavailable.'));
+        } catch (error) {
+          const reason = error instanceof Error ? error.message : 'Unknown error';
+          const shortReason = reason.length > 120 ? `${reason.slice(0, 120)}...` : reason;
+          setEmotionResult(null);
+          if (reason.toLowerCase().includes('abort') || reason.toLowerCase().includes('aborted')) {
+            setEmotionErrorMessage('Facial expression request timed out. Try again with a clearer face and better connection.');
+          } else {
+            setEmotionErrorMessage(`Facial expression API unavailable: ${shortReason}`);
+          }
           setFusionResult(null);
         }
       }
@@ -287,22 +282,39 @@ export default function TranslatorScreen() {
   };
 
   const renderEmotionOverlay = () => {
-    if (isRecording || !emotionResult) {
+    if (!isRecording && !emotionResult && !emotionErrorMessage) {
       return null;
     }
 
-    const confidenceNormalized = emotionResult.confidence > 1
-      ? emotionResult.confidence / 100
-      : emotionResult.confidence;
+    const confidenceNormalized = emotionResult
+      ? (emotionResult.confidence > 1 ? emotionResult.confidence / 100 : emotionResult.confidence)
+      : 0;
 
-    const payload = {
-      emotion: emotionResult.emotion,
-      confidence: Number(confidenceNormalized.toFixed(3)),
-      provider: emotionResult.provider,
-      faces_detected: emotionResult.faces_detected,
-      fusion_status: fusionResult?.status ?? 'aligned',
-      scores: emotionResult.scores,
-    };
+    const payload = emotionResult
+      ? {
+          emotion: emotionResult.emotion,
+          confidence: Number(confidenceNormalized.toFixed(3)),
+          provider: emotionResult.provider,
+          faces_detected: emotionResult.faces_detected,
+          fusion_status: fusionResult?.status ?? 'aligned',
+          scores: emotionResult.scores,
+        }
+      : {
+          emotion: 'reading_fen_model',
+          confidence: 0,
+          provider: 'fen',
+          faces_detected: 0,
+          fusion_status: 'aligned',
+          scores: {
+            angry: 0,
+            disgust: 0,
+            fear: 0,
+            happy: 0,
+            neutral: 0,
+            sad: 0,
+            surprise: 0,
+          },
+        };
 
     return (
       <View
@@ -341,7 +353,11 @@ export default function TranslatorScreen() {
           </View>
         </View>
 
-        {emotionResult.message ? (
+        {isRecording && !emotionResult ? (
+          <View style={styles.emotionNoticeBox}>
+            <Text style={styles.emotionNoticeText}>Fetching data from the trained FEN model...</Text>
+          </View>
+        ) : emotionResult?.message ? (
           <View style={styles.emotionNoticeBox}>
             <Text style={styles.emotionNoticeText}>{emotionResult.message}</Text>
           </View>
@@ -363,6 +379,7 @@ export default function TranslatorScreen() {
             onPress={() => {
               setEmotionResult(null);
               setFusionResult(null);
+              setEmotionErrorMessage(null);
             }}
           >
             <Text style={styles.emotionOverlayCloseText}>Cancel</Text>
@@ -429,6 +446,18 @@ export default function TranslatorScreen() {
         {fenModelMessage ? (
           <Text style={[styles.fenStatusMessage, { color: Colors[colorScheme].tabIconDefault }]}> 
             {fenModelMessage}
+          </Text>
+        ) : null}
+
+        {fenMetadataSource ? (
+          <Text style={[styles.fenStatusMessage, { color: Colors[colorScheme].tabIconDefault }]}> 
+            FEN metadata source: {fenMetadataSource}
+          </Text>
+        ) : null}
+
+        {emotionErrorMessage ? (
+          <Text style={[styles.fenStatusMessage, { color: '#D92D20' }]}> 
+            {emotionErrorMessage}
           </Text>
         ) : null}
 

@@ -79,12 +79,15 @@ export interface EmotionModelInfoResponse {
     ready: boolean;
     model_path: string;
     message?: string;
+    metadata_source?: string;
+    input_mode?: string;
+    labels?: Record<string, string>;
   };
 }
 
 const BACKEND_URL_KEY = 'signlanguage_backend_url';
 const DEFAULT_BACKEND_URL = 'https://improved-space-chainsaw-97rxv5p9r4w2q76-8000.app.github.dev';
-const EMOTION_REQUEST_TIMEOUT_MS = 20000;
+const EMOTION_REQUEST_TIMEOUT_MS = 45000;
 const FACIAL_HEALTH_ENDPOINTS = ['/api/facial-emotion/health', '/health'];
 const FACIAL_MODEL_INFO_ENDPOINTS = ['/api/facial-emotion/model-info', '/model-info'];
 
@@ -327,37 +330,41 @@ export async function analyzeEmotionFromSnapshot(imageBase64: string): Promise<E
 
   for (const baseUrl of candidates) {
     try {
-      const attempts: { endpoint: string; body: Record<string, string> }[] = [
-        { endpoint: '/api/facial-emotion/emotion', body: { image: imageBase64 } },
-        { endpoint: '/api/facial-emotion/predict-emotion', body: { image: imageBase64 } },
-        { endpoint: '/api/facial-emotion/analyze-frame', body: { image_base64: imageBase64 } },
-        { endpoint: '/api/emotion/predict', body: { image: imageBase64 } },
-        { endpoint: '/predict-emotion', body: { image: imageBase64 } },
-      ];
-
-      for (const attempt of attempts) {
-        const response = await fetchWithTimeout(
-          `${baseUrl}${attempt.endpoint}`,
-          {
-            method: 'POST',
-            headers: {
-              'Content-Type': 'application/json',
-            },
-            body: JSON.stringify(attempt.body),
+      const response = await fetchWithTimeout(
+        `${baseUrl}/api/facial-emotion/emotion`,
+        {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
           },
-          EMOTION_REQUEST_TIMEOUT_MS,
-        );
+          body: JSON.stringify({ image: imageBase64 }),
+        },
+        EMOTION_REQUEST_TIMEOUT_MS,
+      );
 
-        if (!response.ok) {
-          const errorText = await response.text();
+      if (!response.ok) {
+        const errorText = await response.text();
+        if (response.status === 413) {
+          lastError = new Error('Camera snapshot is too large for the backend request limit.');
+        } else {
           lastError = new Error(errorText || `Emotion endpoint failed (${response.status})`);
-          continue;
         }
-
-        const payload = await response.json();
-        await saveBackendBaseUrl(baseUrl);
-        return normalizeEmotionResponse(payload);
+        continue;
       }
+
+      const payload = await response.json();
+      const normalized = normalizeEmotionResponse(payload);
+      if (!normalized.success) {
+        lastError = new Error(normalized.message || 'FEN prediction failed.');
+        continue;
+      }
+      if ((normalized.provider ?? '').toLowerCase() !== 'fen') {
+        lastError = new Error(`Unexpected provider '${normalized.provider ?? 'unknown'}'. Expected 'fen'.`);
+        continue;
+      }
+
+      await saveBackendBaseUrl(baseUrl);
+      return normalized;
     } catch (error) {
       lastError = error instanceof Error ? error : new Error('Emotion API request failed');
     }

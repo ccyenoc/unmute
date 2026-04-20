@@ -29,6 +29,11 @@ from tensorflow.keras.utils import to_categorical
 EMOTION_LABELS = ["angry", "disgust", "fear", "happy", "sad", "surprise", "neutral"]
 DEFAULT_FEN_LABELS = ["angry", "disgust", "fear", "happy", "neutral", "sad", "surprise"]
 FACE_EXPAND_RATIO = float(os.getenv("FEN_FACE_EXPAND_RATIO", "0.2"))
+NEUTRAL_SCORE_DAMPING = float(os.getenv("FEN_NEUTRAL_SCORE_DAMPING", "0.6"))
+FEAR_SCORE_DAMPING = float(os.getenv("FEN_FEAR_SCORE_DAMPING", "0.82"))
+FEAR_OVERRIDE_MARGIN = float(os.getenv("FEN_FEAR_OVERRIDE_MARGIN", "12.0"))
+FEAR_OVERRIDE_MIN_SCORE = float(os.getenv("FEN_FEAR_OVERRIDE_MIN_SCORE", "15.0"))
+FEN_USE_ARGMAX_LABEL = os.getenv("FEN_USE_ARGMAX_LABEL", "true").strip().lower() == "true"
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 DATASET_DIR = BASE_DIR / "data" / "emotion_dataset"
@@ -201,6 +206,47 @@ def _prepare_image_model_input(image_bgr: np.ndarray, input_shape: Tuple[Any, ..
     rgb = cv2.cvtColor(image_bgr, cv2.COLOR_BGR2RGB)
     face = cv2.resize(rgb, (width, height), interpolation=cv2.INTER_AREA).astype(np.float32) / 255.0
     return np.expand_dims(face, axis=0)
+
+
+def _select_emotion_from_scores(scores: Dict[str, float], fallback: str = "neutral") -> str:
+    if not scores:
+        return fallback
+
+    decision_scores = dict(scores)
+    if "neutral" in decision_scores:
+        decision_scores["neutral"] = round(float(decision_scores["neutral"]) * NEUTRAL_SCORE_DAMPING, 4)
+    if "fear" in decision_scores:
+        decision_scores["fear"] = round(float(decision_scores["fear"]) * FEAR_SCORE_DAMPING, 4)
+
+    best_emotion = max(decision_scores, key=decision_scores.get)
+    if best_emotion == "fear":
+        fear_score = float(scores.get("fear", 0.0))
+        alt_scores = {
+            "angry": float(scores.get("angry", 0.0)),
+            "sad": float(scores.get("sad", 0.0)),
+        }
+        alt_emotion = max(alt_scores, key=alt_scores.get)
+        alt_score = float(alt_scores.get(alt_emotion, 0.0))
+        if alt_score >= FEAR_OVERRIDE_MIN_SCORE and (fear_score - alt_score) <= FEAR_OVERRIDE_MARGIN:
+            return alt_emotion
+
+    if best_emotion != "neutral":
+        return best_emotion
+
+    neutral_score = float(scores.get("neutral", 0.0))
+    non_neutral_scores = {key: value for key, value in scores.items() if key != "neutral"}
+    if not non_neutral_scores:
+        return "neutral"
+
+    candidate = max(non_neutral_scores, key=non_neutral_scores.get)
+    candidate_score = float(non_neutral_scores.get(candidate, 0.0))
+    if candidate_score >= 5.0 and (neutral_score - candidate_score) <= 35.0:
+        return candidate
+
+    if candidate_score >= max(5.0, neutral_score * 0.7):
+        return candidate
+
+    return "neutral"
 
 
 @lru_cache(maxsize=1)
@@ -528,19 +574,22 @@ def predict_with_fen(image_bytes: bytes) -> Optional[Dict[str, Any]]:
 
     probs = model.predict(model_input, verbose=0)[0]
     best_idx = int(np.argmax(probs))
-    emotion = labels[best_idx] if best_idx < len(labels) else "neutral"
-
     scores = {label: 0.0 for label in EMOTION_LABELS}
     for idx, label in enumerate(labels):
         if idx < len(probs) and label in scores:
             scores[label] = round(float(probs[idx] * 100.0), 4)
+
+    model_emotion = labels[best_idx] if best_idx < len(labels) else "neutral"
+    emotion = model_emotion if FEN_USE_ARGMAX_LABEL else _select_emotion_from_scores(scores, fallback=model_emotion)
+    confidence = float(scores.get(emotion, probs[best_idx] * 100.0))
 
     return {
         "success": True,
         "face_detected": face_detected,
         "faces_detected": 1,
         "emotion": emotion,
-        "confidence": round(float(probs[best_idx] * 100.0), 4),
+        "model_emotion": model_emotion,
+        "confidence": round(max(0.0, min(100.0, confidence)), 4),
         "scores": scores,
         "provider": "fen",
     }
