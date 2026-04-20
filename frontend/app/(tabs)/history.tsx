@@ -1,6 +1,11 @@
 import { Colors } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
-import { clearHistory, getTranslationHistory } from '@/utils/translationService';
+import {
+  clearHistory,
+  deleteTranslation,
+  getTranslationHistory,
+  TranslationRecord,
+} from '@/utils/translationService';
 import { useFocusEffect } from '@react-navigation/native';
 import React, { useState } from 'react';
 import {
@@ -14,16 +19,11 @@ import {
   View,
 } from 'react-native';
 
-interface TranslationRecord {
-  id: string;
-  text: string;
-  date: string;
-}
-
 export default function HistoryScreen() {
   const colorScheme = useColorScheme() ?? 'light';
   const [history, setHistory] = useState<TranslationRecord[]>([]);
   const [isLoading, setIsLoading] = useState(true);
+  const [selectedRecordId, setSelectedRecordId] = useState<string | null>(null);
 
   useFocusEffect(
     React.useCallback(() => {
@@ -65,12 +65,20 @@ export default function HistoryScreen() {
       {
         text: 'Delete',
         style: 'destructive',
-        onPress: () => {
-          setHistory(history.filter((item) => item.id !== id));
+        onPress: async () => {
+          try {
+            await deleteTranslation(id);
+            setHistory((current) => current.filter((item) => item.id !== id));
+            setSelectedRecordId((current) => (current === id ? null : current));
+          } catch {
+            Alert.alert('Error', 'Failed to delete history item');
+          }
         },
       },
     ]);
   };
+
+  const selectedRecord = history.find((item) => item.id === selectedRecordId) ?? null;
 
   const renderHistoryItem = ({ item }: { item: TranslationRecord }) => (
     <TouchableOpacity
@@ -80,7 +88,9 @@ export default function HistoryScreen() {
           backgroundColor: Colors[colorScheme].background,
           borderColor: Colors[colorScheme].tabIconDefault,
         },
+        item.id === selectedRecordId ? styles.historyItemSelected : null,
       ]}
+      onPress={() => setSelectedRecordId(item.id)}
       onLongPress={() => handleDeleteItem(item.id)}
     >
       <View style={styles.historyItemContent}>
@@ -125,6 +135,52 @@ export default function HistoryScreen() {
             contentContainerStyle={styles.listContent}
             scrollEnabled={true}
           />
+          {selectedRecord ? (
+            <View
+              style={[
+                styles.detailsPanel,
+                {
+                  backgroundColor: Colors[colorScheme].background,
+                  borderColor: Colors[colorScheme].tabIconDefault,
+                },
+              ]}
+            >
+              <Text style={[styles.detailsTitle, { color: Colors[colorScheme].text }]}>Selected Translation</Text>
+              <Text style={[styles.detailsTranslationText, { color: Colors[colorScheme].text }]}>
+                {selectedRecord.text}
+              </Text>
+              <Text style={[styles.detailsDateText, { color: Colors[colorScheme].tabIconDefault }]}>
+                {selectedRecord.date}
+              </Text>
+
+              <View style={styles.separator} />
+              <Text style={[styles.detailsTitle, { color: Colors[colorScheme].text }]}>Facial Expression API</Text>
+
+              {selectedRecord.emotion ? (
+                <>
+                  <Text style={[styles.detailsFieldText, { color: Colors[colorScheme].text }]}> 
+                    Emotion: {selectedRecord.emotion.emotion}
+                  </Text>
+                  <Text style={[styles.detailsFieldText, { color: Colors[colorScheme].text }]}> 
+                    Confidence: {selectedRecord.emotion.confidence}
+                  </Text>
+                  <Text style={[styles.detailsFieldText, { color: Colors[colorScheme].text }]}> 
+                    Faces Detected: {selectedRecord.emotion.faces_detected}
+                  </Text>
+                  <Text style={[styles.detailsFieldText, { color: Colors[colorScheme].text }]}> 
+                    Provider: {selectedRecord.emotion.provider ?? 'unknown'}
+                  </Text>
+                  <Text style={[styles.detailsFieldText, { color: Colors[colorScheme].text }]}> 
+                    Fusion: {selectedRecord.emotion.fusion_status ?? 'aligned'}
+                  </Text>
+                </>
+              ) : (
+                <Text style={[styles.detailsEmptyText, { color: Colors[colorScheme].tabIconDefault }]}>
+                  No facial expression data stored for this translation.
+                </Text>
+              )}
+            </View>
+          ) : null}
           <TouchableOpacity
             style={[styles.clearButton, { backgroundColor: '#FF3B30' }]}
             onPress={handleClearHistory}
@@ -170,6 +226,10 @@ const styles = StyleSheet.create({
     borderRadius: 8,
     borderWidth: 1,
   },
+  historyItemSelected: {
+    borderColor: '#007AFF',
+    borderWidth: 2,
+  },
   historyItemContent: {
     flex: 1,
   },
@@ -184,6 +244,40 @@ const styles = StyleSheet.create({
   dragHandle: {
     fontSize: 18,
     marginLeft: 8,
+  },
+  detailsPanel: {
+    marginHorizontal: 12,
+    marginBottom: 90,
+    borderRadius: 10,
+    borderWidth: 1,
+    padding: 12,
+  },
+  detailsTitle: {
+    fontSize: 13,
+    fontWeight: '700',
+    textTransform: 'uppercase',
+    marginBottom: 8,
+  },
+  detailsTranslationText: {
+    fontSize: 16,
+    fontWeight: '600',
+  },
+  detailsDateText: {
+    marginTop: 4,
+    fontSize: 12,
+  },
+  separator: {
+    marginVertical: 12,
+    height: 1,
+    backgroundColor: 'rgba(127,127,127,0.3)',
+  },
+  detailsFieldText: {
+    fontSize: 13,
+    marginBottom: 6,
+  },
+  detailsEmptyText: {
+    fontSize: 13,
+    fontStyle: 'italic',
   },
   clearButton: {
     position: 'absolute',

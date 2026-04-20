@@ -1,29 +1,39 @@
 import { Colors } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import {
-    analyzeEmotionFromBase64,
-    checkFacialApiHealth,
-    EmotionAnalysisResponse,
-    FusionResponse,
-    interpretFusion,
+  analyzeEmotionFromBase64,
+  checkFacialApiHealth,
+  EmotionAnalysisResponse,
+  FusionResponse,
+  interpretFusion,
 } from '@/utils/facialEmotionService';
-import { simulateSignTranslation, storeTranslation } from '@/utils/translationService';
+import { FacialEmotionSnapshot, simulateSignTranslation, storeTranslation } from '@/utils/translationService';
 import { useFocusEffect } from '@react-navigation/native';
 import { CameraView, useCameraPermissions } from 'expo-camera';
 import React, { useCallback, useRef, useState } from 'react';
 import {
-    ActivityIndicator,
-    Alert,
-    SafeAreaView,
-    StyleSheet,
-    Text,
-    TouchableOpacity,
-    View,
+  ActivityIndicator,
+  Alert,
+  Dimensions,
+  PanResponder,
+  SafeAreaView,
+  ScrollView,
+  StyleSheet,
+  Text,
+  TouchableOpacity,
+  View,
 } from 'react-native';
 
 export default function TranslatorScreen() {
   const colorScheme = useColorScheme() ?? 'light';
-  const actionButtonTextColor = colorScheme === 'light' ? '#11181C' : '#FFFFFF';
+  const actionButtonTextColor = '#11181C';
+  const [overlayScale, setOverlayScale] = useState(1);
+  const [overlayPosition, setOverlayPosition] = useState({ x: 12, y: 60 });
+  const dragStartRef = useRef({ x: 12, y: 60 });
+  const touchStartRef = useRef({ x: 0, y: 0 });
+  const pinchStartDistanceRef = useRef<number | null>(null);
+  const pinchStartScaleRef = useRef(1);
+  const isPinchingRef = useRef(false);
   const [permission, requestPermission] = useCameraPermissions();
   const [isRecording, setIsRecording] = useState(false);
   const [translation, setTranslation] = useState<string | null>(null);
@@ -33,6 +43,104 @@ export default function TranslatorScreen() {
   const [backendStatusLabel, setBackendStatusLabel] = useState('Checking...');
   const [isProcessing, setIsProcessing] = useState(false);
   const cameraRef = useRef<CameraView>(null);
+
+  const clamp = (value: number, min: number, max: number) => Math.min(Math.max(value, min), max);
+
+  const getOverlayBounds = (scale: number) => {
+    const { width: screenWidth, height: screenHeight } = Dimensions.get('window');
+    const scaledWidth = 240 * scale;
+    const scaledHeight = 320 * scale;
+    return {
+      minX: -scaledWidth * 0.75,
+      maxX: Math.max(8, screenWidth - scaledWidth * 0.25),
+      minY: -scaledHeight * 0.45,
+      maxY: Math.max(52, screenHeight - scaledHeight * 0.15),
+    };
+  };
+
+  const getTouchDistance = (touches: readonly { pageX: number; pageY: number }[]) => {
+    if (touches.length < 2) {
+      return 0;
+    }
+    const dx = touches[0].pageX - touches[1].pageX;
+    const dy = touches[0].pageY - touches[1].pageY;
+    return Math.hypot(dx, dy);
+  };
+
+  const panResponder = useRef(
+    PanResponder.create({
+      onMoveShouldSetPanResponder: (evt, gestureState) => {
+        const touchCount = evt.nativeEvent.touches.length;
+        return touchCount > 1 || Math.abs(gestureState.dx) > 2 || Math.abs(gestureState.dy) > 2;
+      },
+      onPanResponderGrant: (evt, gestureState) => {
+        dragStartRef.current = overlayPosition;
+        touchStartRef.current = { x: gestureState.x0, y: gestureState.y0 };
+        if (evt.nativeEvent.touches.length > 1) {
+          pinchStartDistanceRef.current = getTouchDistance(evt.nativeEvent.touches);
+          pinchStartScaleRef.current = overlayScale;
+          isPinchingRef.current = true;
+        } else {
+          pinchStartDistanceRef.current = null;
+          isPinchingRef.current = false;
+        }
+      },
+      onPanResponderMove: (evt, gestureState) => {
+        if (evt.nativeEvent.touches.length > 1) {
+          const currentDistance = getTouchDistance(evt.nativeEvent.touches);
+          if (!pinchStartDistanceRef.current || pinchStartDistanceRef.current <= 0) {
+            pinchStartDistanceRef.current = currentDistance;
+            pinchStartScaleRef.current = overlayScale;
+            isPinchingRef.current = true;
+            return;
+          }
+
+          const ratio = currentDistance / pinchStartDistanceRef.current;
+          const nextScale = clamp(pinchStartScaleRef.current * ratio, 0.6, 2.3);
+          const bounds = getOverlayBounds(nextScale);
+
+          setOverlayScale(nextScale);
+          setOverlayPosition((currentPosition) => ({
+            x: clamp(currentPosition.x, bounds.minX, bounds.maxX),
+            y: clamp(currentPosition.y, bounds.minY, bounds.maxY),
+          }));
+          return;
+        }
+
+        if (isPinchingRef.current) {
+          return;
+        }
+
+        const bounds = getOverlayBounds(overlayScale);
+        const nextX = dragStartRef.current.x + (gestureState.moveX - touchStartRef.current.x);
+        const nextY = dragStartRef.current.y + (gestureState.moveY - touchStartRef.current.y);
+        setOverlayPosition({
+          x: clamp(nextX, bounds.minX, bounds.maxX),
+          y: clamp(nextY, bounds.minY, bounds.maxY),
+        });
+      },
+      onPanResponderRelease: () => {
+        pinchStartDistanceRef.current = null;
+        isPinchingRef.current = false;
+      },
+      onPanResponderTerminate: () => {
+        pinchStartDistanceRef.current = null;
+        isPinchingRef.current = false;
+      },
+    })
+  ).current;
+
+  const zoomOverlay = (delta: number) => {
+    setOverlayScale((current) => {
+      const nextScale = clamp(current + delta, 0.6, 2.3);
+      const bounds = getOverlayBounds(nextScale);
+      setOverlayPosition((currentPosition) => ({
+        x: clamp(currentPosition.x, bounds.minX, bounds.maxX),
+        y: clamp(currentPosition.y, bounds.minY, bounds.maxY),
+      }));
+      return nextScale;
+    });
+  };
 
   React.useEffect(() => {
     if (!permission?.granted) {
@@ -95,16 +203,29 @@ export default function TranslatorScreen() {
 
       const result = await simulateSignTranslation();
       setTranslation(result);
+      let historyEmotionSnapshot: FacialEmotionSnapshot | null = null;
 
       if (snapshot.base64) {
         try {
           const emotion = await analyzeEmotionFromBase64(snapshot.base64);
           setEmotionResult(emotion);
 
+          historyEmotionSnapshot = {
+            emotion: emotion.emotion,
+            confidence: emotion.confidence,
+            provider: emotion.provider,
+            faces_detected: emotion.faces_detected,
+            scores: emotion.scores,
+          };
+
           if (emotion.face_detected) {
             try {
               const fusion = await interpretFusion(result, emotion.emotion, emotion.confidence);
               setFusionResult(fusion);
+              historyEmotionSnapshot = {
+                ...historyEmotionSnapshot,
+                fusion_status: fusion.status,
+              };
             } catch {
               setFusionResult(null);
             }
@@ -115,7 +236,7 @@ export default function TranslatorScreen() {
         }
       }
 
-      await storeTranslation(result);
+      await storeTranslation(result, historyEmotionSnapshot);
       await speakTranslation(result);
     } catch {
       Alert.alert('Error', 'Failed to process sign language.');
@@ -155,18 +276,44 @@ export default function TranslatorScreen() {
     };
 
     return (
-      <View style={styles.emotionOverlayCard}>
-        <Text style={styles.emotionOverlayTitle}>Facial Expression API</Text>
-        <Text style={styles.emotionOverlayPayload}>{JSON.stringify(payload, null, 2)}</Text>
-        <TouchableOpacity
-          style={styles.emotionOverlayCloseButton}
-          onPress={() => {
-            setEmotionResult(null);
-            setFusionResult(null);
-          }}
-        >
-          <Text style={styles.emotionOverlayCloseText}>Cancel</Text>
-        </TouchableOpacity>
+      <View
+        style={[
+          styles.emotionOverlayCard,
+          {
+            transform: [{ scale: overlayScale }],
+            left: overlayPosition.x,
+            top: overlayPosition.y,
+          },
+        ]}
+      >
+        <View style={styles.emotionOverlayHeader} {...panResponder.panHandlers}>
+          <Text style={styles.emotionOverlayTitle}>Facial Expression API</Text>
+          <View style={styles.emotionOverlayActions}>
+            <TouchableOpacity style={styles.zoomControl} onPress={() => zoomOverlay(-0.1)}>
+              <Text style={styles.zoomControlText}>-</Text>
+            </TouchableOpacity>
+            <TouchableOpacity style={styles.zoomControl} onPress={() => zoomOverlay(0.1)}>
+              <Text style={styles.zoomControlText}>+</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+
+        <ScrollView style={styles.emotionOverlayScroll} contentContainerStyle={styles.emotionOverlayScrollContent}>
+          <Text style={styles.emotionOverlayPayload}>{JSON.stringify(payload, null, 2)}</Text>
+        </ScrollView>
+
+        <View style={styles.emotionOverlayFooter}>
+          <Text style={styles.dragHint}>Drag to move, pinch or +/- to zoom</Text>
+          <TouchableOpacity
+            style={styles.emotionOverlayCloseButton}
+            onPress={() => {
+              setEmotionResult(null);
+              setFusionResult(null);
+            }}
+          >
+            <Text style={styles.emotionOverlayCloseText}>Cancel</Text>
+          </TouchableOpacity>
+        </View>
       </View>
     );
   };
@@ -245,8 +392,8 @@ export default function TranslatorScreen() {
         <TouchableOpacity
           style={[
             styles.button,
+            styles.startButton,
             {
-              backgroundColor: Colors[colorScheme].tint,
               opacity: isRecording || isProcessing ? 0.6 : 1,
             },
           ]}
@@ -300,18 +447,46 @@ const styles = StyleSheet.create({
   },
   emotionOverlayCard: {
     position: 'absolute',
-    right: 12,
-    top: 60,
-    width: 220,
+    width: 240,
+    maxHeight: 340,
     backgroundColor: 'rgba(0, 0, 0, 0.75)',
     borderRadius: 10,
     padding: 10,
+  },
+  emotionOverlayHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 6,
   },
   emotionOverlayTitle: {
     color: '#FFFFFF',
     fontSize: 12,
     fontWeight: '700',
-    marginBottom: 6,
+  },
+  emotionOverlayActions: {
+    flexDirection: 'row',
+    gap: 6,
+  },
+  zoomControl: {
+    width: 24,
+    height: 24,
+    borderRadius: 12,
+    justifyContent: 'center',
+    alignItems: 'center',
+    backgroundColor: 'rgba(255,255,255,0.22)',
+  },
+  zoomControlText: {
+    color: '#FFFFFF',
+    fontSize: 16,
+    fontWeight: '700',
+    lineHeight: 18,
+  },
+  emotionOverlayScroll: {
+    maxHeight: 240,
+  },
+  emotionOverlayScrollContent: {
+    paddingBottom: 8,
   },
   emotionOverlayPayload: {
     color: '#FFFFFF',
@@ -319,9 +494,18 @@ const styles = StyleSheet.create({
     lineHeight: 16,
     fontFamily: 'monospace',
   },
-  emotionOverlayCloseButton: {
-    alignSelf: 'flex-end',
+  emotionOverlayFooter: {
     marginTop: 8,
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+  },
+  dragHint: {
+    color: 'rgba(255,255,255,0.75)',
+    fontSize: 10,
+    fontWeight: '500',
+  },
+  emotionOverlayCloseButton: {
     paddingHorizontal: 10,
     paddingVertical: 4,
     borderRadius: 6,
@@ -394,6 +578,11 @@ const styles = StyleSheet.create({
     borderRadius: 12,
     alignItems: 'center',
     boxShadow: '0px 2px 4px rgba(0, 0, 0, 0.1)',
+  },
+  startButton: {
+    backgroundColor: '#FFFFFF',
+    borderWidth: 1,
+    borderColor: 'rgba(0, 0, 0, 0.08)',
   },
   buttonText: {
     fontSize: 16,

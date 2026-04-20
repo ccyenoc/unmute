@@ -13,6 +13,29 @@ Python FastAPI backend with MediaPipe for real-time sign language detection.
 
 ## Quick Start
 
+### Run Backend (Copy/Paste)
+
+From the project root:
+
+```bash
+cd backend
+python -m venv venv
+source venv/bin/activate
+pip install -r requirements.txt
+python app.py
+```
+
+Alternative run command:
+
+```bash
+cd backend
+source venv/bin/activate
+uvicorn app:app --reload --host 0.0.0.0 --port 8000
+```
+
+Backend URL: **http://localhost:8000**
+Swagger docs: **http://localhost:8000/docs**
+
 ### 1. Prerequisites
 
 - Python 3.8+
