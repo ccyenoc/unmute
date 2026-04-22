@@ -1,4 +1,4 @@
 """
-Training Routes
-Model training and dataset management
+Real-time Sign Language Prediction
 """
+
