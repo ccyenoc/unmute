@@ -1,7 +1,4 @@
-"""
-Sign Language Translator - FastAPI Backend
-Main application entry point
-"""
+
 from fastapi import FastAPI, UploadFile, File, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
@@ -9,9 +6,8 @@ import os
 from dotenv import load_dotenv
 
 # Import routers
-from routes.detection import router as detection_router
-from routes.history import router as history_router
-from routes.training import router as training_router
+from backend.routes.detection import router as detection_router
+from backend.routes.emotion import router as emotion_router
 
 load_dotenv()
 
@@ -32,8 +28,7 @@ app.add_middleware(
 
 # Include routers
 app.include_router(detection_router, prefix="/api/detection", tags=["Detection"])
-app.include_router(history_router, prefix="/api/history", tags=["History"])
-app.include_router(training_router, prefix="/api/training", tags=["Training"])
+app.include_router(emotion_router, prefix="/api/emotion", tags=["Emotion Detection"])
 
 @app.get("/")
 def read_root():
@@ -52,11 +47,3 @@ def health_check():
         "message": "Backend is running"
     }
 
-if __name__ == "__main__":
-    import uvicorn
-    uvicorn.run(
-        "app:app",
-        host="0.0.0.0",
-        port=int(os.getenv("PORT", 8000)),
-        reload=True
-    )
