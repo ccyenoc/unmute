@@ -3,11 +3,44 @@ import numpy as np
 import mediapipe as mp
 import joblib
 from collections import deque
+import os
 
+# ===== TEXT INPUT STATE =====
+typed_text = ""
+text_mode = False
+play_queue = []
+current_word_idx = 0
+
+SIGN_VIDEO_PATH = "data/videos"
+
+# ===== VIDEO PLAYER =====
+def play_video(word):
+    path = os.path.join(SIGN_VIDEO_PATH, f"{word}.mp4")
+
+    if not os.path.exists(path):
+        print(f"❌ No video for: {word}")
+        return
+
+    cap_v = cv2.VideoCapture(path)
+
+    while cap_v.isOpened():
+        ret, frame = cap_v.read()
+        if not ret:
+            break
+
+        cv2.imshow("Sign Playback", frame)
+
+        if cv2.waitKey(25) & 0xFF == 27:  # ESC to skip
+            break
+
+    cap_v.release()
+    cv2.destroyWindow("Sign Playback")
+
+# ===== LOAD MODEL =====
 model = joblib.load("models/sign_model.pkl")
 
 # ===== CONFIG =====
-PHRASE_DURATION = 30   # ~1 second
+PHRASE_DURATION = 30
 CONFIDENCE_THRESHOLD = 0.7
 
 DIRECT_PHRASES = {
@@ -30,14 +63,13 @@ hands = mp_hands.Hands(
 
 # ===== STATE =====
 history = deque(maxlen=12)
-word_buffer = []          # temporary words (e.g. ["me"])
-phrases = []              # list of [text, timer]
+word_buffer = []
+phrases = []
 cooldown = 0
 no_hand_frames = 0
 
+# ===== CAMERA =====
 cap = cv2.VideoCapture(0)
-print("Using camera:", cap.get(cv2.CAP_PROP_BACKEND))
-
 print("✅ Running Sign Translator")
 
 while True:
@@ -51,7 +83,7 @@ while True:
 
     prediction = "..."
 
-    # ===== HAND DETECTED =====
+    # ===== HAND DETECTION (UNCHANGED) =====
     if results.multi_hand_landmarks:
         no_hand_frames = 0
 
@@ -63,7 +95,6 @@ while True:
                 mp_hands.HAND_CONNECTIONS
             )
 
-            # Extract features
             row = []
             base_x = hand_landmarks.landmark[0].x
             base_y = hand_landmarks.landmark[0].y
@@ -72,9 +103,7 @@ while True:
                 row.extend([lm.x - base_x, lm.y - base_y])
 
             row = np.array(row).reshape(1, -1)
-            print("WEBCAM ROW:", row[0][:10])
 
-            # Prediction with confidence
             probs = model.predict_proba(row)
             confidence = np.max(probs)
 
@@ -85,21 +114,18 @@ while True:
 
             history.append(pred)
 
-        # ===== STABLE PREDICTION =====
         if len(history) > 0:
             prediction = max(set(history), key=history.count)
 
         if cooldown > 0:
             cooldown -= 1
 
-        # ===== ACCEPT WORD =====
         if (
             history.count(prediction) >= len(history) * 0.6
             and cooldown == 0
             and prediction != "..."
         ):
 
-            # 🔥 DIRECT PHRASES
             if prediction in DIRECT_PHRASES:
                 phrases.append([DIRECT_PHRASES[prediction], PHRASE_DURATION])
                 cooldown = 30
@@ -107,14 +133,12 @@ while True:
                 word_buffer = []
 
             else:
-                # ===== BUILD WORD BUFFER =====
                 if len(word_buffer) == 0:
                     word_buffer.append(prediction)
 
                 else:
                     prev = word_buffer[-1]
 
-                    # 🔥 "me hungry" → phrase
                     if prev == "me" and prediction == "hungry":
                         phrases.append(["I am hungry", PHRASE_DURATION])
                         word_buffer = []
@@ -123,33 +147,26 @@ while True:
                         phrases.append(["I am tired", PHRASE_DURATION])
                         word_buffer = []
 
-                    # 🔥 name detection
-                    elif prev == "name":
-                        phrases.append([f"My name is {prediction.upper()}", PHRASE_DURATION])
-                        word_buffer = []
-
                     else:
                         word_buffer.append(prediction)
 
                 cooldown = 15
 
-    # ===== NO HAND =====
     else:
         no_hand_frames += 1
-
         if no_hand_frames > 15:
             history.clear()
             word_buffer = []
 
-    # ===== UPDATE PHRASES (TIMER) =====
+    # ===== UPDATE PHRASES =====
     for p in phrases:
         p[1] -= 1
 
     phrases = [p for p in phrases if p[1] > 0]
 
-    # ===== DISPLAY =====
     display_text = " ".join([p[0] for p in phrases])
 
+    # ===== DISPLAY =====
     cv2.putText(frame, f"Prediction: {prediction}",
                 (10, 40),
                 cv2.FONT_HERSHEY_SIMPLEX,
@@ -164,16 +181,63 @@ while True:
                 (255,255,0),
                 2)
 
+    # ===== TEXT INPUT DISPLAY =====
+    if text_mode:
+        cv2.putText(frame, f"Typing: {typed_text}",
+                    (10, 120),
+                    cv2.FONT_HERSHEY_SIMPLEX,
+                    0.8,
+                    (0,200,255),
+                    2)
+    else:
+        cv2.putText(frame, "Press 't' to type",
+                    (10, 120),
+                    cv2.FONT_HERSHEY_SIMPLEX,
+                    0.6,
+                    (200,200,200),
+                    2)
+
     cv2.imshow("Sign Translator", frame)
 
     key = cv2.waitKey(1) & 0xFF
 
-    if key == ord('q'):
-        break
+    # ===== KEY HANDLING =====
+    if key == ord('t'):
+        text_mode = True
+        typed_text = ""
+
+    elif text_mode:
+        if key == 13:  # ENTER
+            print("Typed:", typed_text)
+            text_mode = False
+            text = typed_text.lower().replace(" ", "_")
+
+            text = typed_text.lower().replace("i am", "me")
+            play_queue = text.split()
+            current_word_idx = 0
+
+        elif key == 8:
+            typed_text = typed_text[:-1]
+
+        elif 32 <= key <= 126:
+            typed_text += chr(key)
 
     if key == ord('c'):
         phrases = []
         word_buffer = []
+        play_queue = []
+
+    if key == ord('q'):
+        break
+
+    # ===== VIDEO PLAYBACK =====
+    if play_queue:
+        word = play_queue[current_word_idx]
+        play_video(word)
+
+        current_word_idx += 1
+        if current_word_idx >= len(play_queue):
+            play_queue = []
 
 cap.release()
 cv2.destroyAllWindows()
