@@ -28,7 +28,7 @@ export default function TabLayout() {
         options={{
           title: 'History',
           headerTitle: 'Translation History',
-          tabBarIcon: ({ color }) => <IconSymbol size={28} name="list.bullet" color={color} />,
+          tabBarIcon: ({ color }) => <IconSymbol size={28} name="arrow.counterclockwise" color={color} />,
         }}
       />
       <Tabs.Screen

@@ -20,6 +20,16 @@ export interface TranslationRecord {
   id: string;
   text: string;
   date: string;
+  emotion?: FacialEmotionSnapshot | null;
+}
+
+export interface FacialEmotionSnapshot {
+  emotion: string;
+  confidence: number;
+  provider: string | null;
+  faces_detected: number;
+  fusion_status?: string;
+  scores?: Record<string, number>;
 }
 
 /**
@@ -38,7 +48,10 @@ export async function simulateSignTranslation(): Promise<string> {
 /**
  * Stores a translation in the device's local storage
  */
-export async function storeTranslation(translation: string): Promise<void> {
+export async function storeTranslation(
+  translation: string,
+  emotionSnapshot: FacialEmotionSnapshot | null = null,
+): Promise<void> {
   try {
     const history = await getTranslationHistory();
     
@@ -46,6 +59,7 @@ export async function storeTranslation(translation: string): Promise<void> {
       id: Date.now().toString(),
       text: translation,
       date: new Date().toLocaleString(),
+      emotion: emotionSnapshot,
     };
     
     // Add new record to the beginning of the array

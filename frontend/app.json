@@ -28,6 +28,12 @@
     "plugins": [
       "expo-router",
       [
+        "expo-camera",
+        {
+          "cameraPermission": "Allow SignLanguageTranslator to access your camera for sign and facial emotion detection."
+        }
+      ],
+      [
         "expo-splash-screen",
         {
           "image": "./assets/images/splash-icon.png",
@@ -43,6 +49,9 @@
     "experiments": {
       "typedRoutes": true,
       "reactCompiler": true
+    },
+    "extra": {
+      "backendUrl": "https://improved-space-chainsaw-97rxv5p9r4w2q76-8000.app.github.dev"
     }
   }
 }
