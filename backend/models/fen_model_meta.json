@@ -1,0 +1,14 @@
+{
+  "model_path": "models/fen_model.h5",
+  "labels": {
+    "0": "angry",
+    "1": "disgust",
+    "2": "fear",
+    "3": "happy",
+    "4": "neutral",
+    "5": "sad",
+    "6": "surprise"
+  },
+  "input_mode": "image",
+  "saved_at": "2026-04-20T14:45:49.993675Z"
+}

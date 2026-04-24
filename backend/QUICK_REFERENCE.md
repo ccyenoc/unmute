@@ -85,6 +85,23 @@ curl -X POST "http://localhost:8000/api/training/train-incremental?sign_class=A&
 
 ## Real-Time Detection
 
+### Emotion Predict API (Base64 or File)
+
+```bash
+# Base64 frame payload
+curl -X POST "http://localhost:8000/api/emotion/predict" \
+  -H "Content-Type: application/json" \
+  -d '{"image":"data:image/jpeg;base64,/9j/..."}'
+```
+
+```bash
+# Uploaded image file
+curl -X POST "http://localhost:8000/api/emotion/predict" \
+  -F "file=@face.jpg"
+```
+
+Response fields: `emotion`, `confidence` (0-1), `face_detected`.
+
 ### Test Detection (Image)
 
 ```bash
