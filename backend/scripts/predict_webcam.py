@@ -5,6 +5,16 @@ import joblib
 from collections import deque
 import os
 
+from tensorflow.keras.models import load_model
+
+emotion_model = load_model("models/emotion_model.hdf5", compile=False)
+
+emotion_labels = ['angry','disgust','fear','happy','sad','surprise','neutral']
+
+face_cascade = cv2.CascadeClassifier(
+    cv2.data.haarcascades + 'haarcascade_frontalface_default.xml'
+)
+
 # ===== TEXT INPUT STATE =====
 typed_text = ""
 text_mode = False
@@ -83,6 +93,24 @@ while True:
 
     prediction = "..."
 
+   # ===== EMOTION DETECTION =====
+    gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+    faces = face_cascade.detectMultiScale(gray, 1.3, 5)
+
+    emotion_text = "No face"
+
+    if len(faces) > 0:
+        (x, y, w, h) = max(faces, key=lambda f: f[2]*f[3])
+
+        face = gray[y:y+h, x:x+w]
+        face = cv2.resize(face, (64, 64))
+        face = face.astype("float32") / 255.0
+        face = np.reshape(face, (1, 64, 64, 1))
+
+        preds = emotion_model.predict(face, verbose=0)[0]
+        emotion_text = emotion_labels[np.argmax(preds)]
+
+        cv2.rectangle(frame, (x,y), (x+w,y+h), (255,0,0), 2)
     # ===== HAND DETECTION (UNCHANGED) =====
     if results.multi_hand_landmarks:
         no_hand_frames = 0
@@ -180,6 +208,13 @@ while True:
                 1,
                 (255,255,0),
                 2)
+    
+    cv2.putText(frame, f"Emotion: {emotion_text}",
+            (10, 160),
+            cv2.FONT_HERSHEY_SIMPLEX,
+            0.8,
+            (255,100,100),
+            2)
 
     # ===== TEXT INPUT DISPLAY =====
     if text_mode:

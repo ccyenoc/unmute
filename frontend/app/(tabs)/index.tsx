@@ -23,6 +23,7 @@ interface LandmarkResponse {
 
 export default function TranslatorScreen() {
   const colorScheme = useColorScheme() ?? 'light';
+  const actionButtonTextColor = '#11181C';
   const [permission, requestPermission] = useCameraPermissions();
   const cameraRef = useRef<CameraView>(null);
 
@@ -153,6 +154,11 @@ export default function TranslatorScreen() {
     // cooldown
     if (cooldown.current > 0) {
       cooldown.current--;
+      return;
+    }
+
+    if (!cameraRef.current) {
+      Alert.alert('Camera Error', 'Camera is not ready yet. Please try again.');
       return;
     }
 
@@ -324,6 +330,7 @@ export default function TranslatorScreen() {
       </View>
     </SafeAreaView>
   );
+
 }
 
 const styles = StyleSheet.create({
