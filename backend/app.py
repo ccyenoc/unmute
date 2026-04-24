@@ -60,3 +60,14 @@ if __name__ == "__main__":
         port=int(os.getenv("PORT", 8000)),
         reload=True
     )
+
+@app.post("/api/detection/predict")
+async def predict(file: UploadFile = File(...)):
+    contents = await file.read()
+
+    nparr = np.frombuffer(contents, np.uint8)
+    frame = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
+
+    result = predict_sign(frame)
+
+    return result
