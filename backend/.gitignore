@@ -78,3 +78,19 @@ yarn-error.log
 temp/
 tmp/
 *.tmp
+
+# iOS / React Native
+ios/Pods/
+frontend/ios/Pods/
+
+# Python
+__pycache__/
+*.pyc
+
+# models (optional if large)
+*.hdf5
+*.pkl
+
+# env
+mp_env/
+.env/
