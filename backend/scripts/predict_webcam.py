@@ -23,7 +23,7 @@ mp_drawing = mp.solutions.drawing_utils
 
 hands = mp_hands.Hands(
     static_image_mode=False,
-    max_num_hands=1,
+    max_num_hands=2,
     min_detection_confidence=0.7,
     min_tracking_confidence=0.7
 )
@@ -36,6 +36,7 @@ cooldown = 0
 no_hand_frames = 0
 
 cap = cv2.VideoCapture(0)
+print("Using camera:", cap.get(cv2.CAP_PROP_BACKEND))
 
 print("✅ Running Sign Translator")
 
@@ -71,6 +72,7 @@ while True:
                 row.extend([lm.x - base_x, lm.y - base_y])
 
             row = np.array(row).reshape(1, -1)
+            print("WEBCAM ROW:", row[0][:10])
 
             # Prediction with confidence
             probs = model.predict_proba(row)
