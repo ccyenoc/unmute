@@ -27,6 +27,7 @@ const CONFIDENCE_THRESHOLD = 0.5
 const PHRASE_DURATION_TICKS = 30
 const INTERVAL_MS = 200
 
+
 const EMOTION = [
   { key: 'happy', icon: '😊', label: 'Happy' },
   { key: 'sad', icon: '😢', label: 'Sad' },
@@ -37,10 +38,15 @@ const EMOTION = [
   { key: 'neutral', icon: '😐', label: 'Neutral' },
 ]
 
+
 export default function TranslatorPage({ onAddHistory }: TranslatorPageProps) {
   const videoRef = useRef<HTMLVideoElement>(null)
   const captureCanvasRef = useRef<HTMLCanvasElement>(null)
   const panelRef = useRef<HTMLDivElement>(null)
+  const [showPlayer, setShowPlayer] = useState(false)
+
+  const videoPlayerRef = useRef<HTMLVideoElement>(null)
+  const [currentPlayIndex, setCurrentPlayIndex] = useState(0)
 
   const [cameraReady, setCameraReady] = useState(false)
   const [cameraError, setCameraError] = useState('')
@@ -71,9 +77,67 @@ export default function TranslatorPage({ onAddHistory }: TranslatorPageProps) {
 
   const [emotionConfidence, setEmotionConfidence] = useState(0)
 
+  const [typedText, setTypedText] = useState('')
+  const [playQueue, setPlayQueue] = useState<string[]>([])
+
+  const normalizeText = (text: string) =>
+  text.toLowerCase().trim().replace(/\s+/g, ' ')
+
+ const handleTextSubmit = () => {
+  const normalized = normalizeText(typedText)
+
+  let videoKey = ''
+
+  if (normalized === 'i am hungry') {
+    videoKey = 'i_am_hungry'
+  } else if (normalized === 'can i help you') {
+    videoKey = 'can_i_help_you'
+  } else if (normalized === 'sure') {
+    videoKey = 'sure'
+  } else {
+    alert('No video available for this sentence')
+    return
+  }
+
+  setPlayQueue([videoKey])
+  setCurrentPlayIndex(0)
+  setShowPlayer(true)
+  setTypedText('')
+}
+
   const handleClear = () => {
   setSentence('')
   setWordBuffer([])
+}
+
+  useEffect(() => {
+  if (playQueue.length === 0) return
+
+  const video = videoPlayerRef.current
+  if (!video) return
+
+  const word = playQueue[currentPlayIndex]
+  if (!word) return
+
+  video.src = `/videos/${word}.mp4`
+  video.load() // 🔥 FORCE reload
+
+  video.onerror = () => {
+  console.error(`❌ Missing video: ${word}`)
+}
+
+  video.play().catch(() => {})
+
+}, [playQueue, currentPlayIndex])
+
+const handleVideoEnd = () => {
+  if (currentPlayIndex < playQueue.length - 1) {
+    setCurrentPlayIndex(prev => prev + 1)
+  } else {
+    setPlayQueue([])
+    setCurrentPlayIndex(0)
+    setShowPlayer(false) // 🔥 close popup
+  }
 }
 
   // ── Camera setup ──────────────────────────────────────────────
@@ -334,10 +398,35 @@ export default function TranslatorPage({ onAddHistory }: TranslatorPageProps) {
 
     {/* Optional confidence */}
     <div style={{ fontSize: '0.75rem', color: 'var(--text-dim)' }}>
-      {confidence ? `Confidence: ${(confidence * 100).toFixed(1)}%` : ''}
+      {emotionConfidence ? `Confidence: ${(emotionConfidence * 100).toFixed(1)}%` : ''}
     </div>
 
   </div>
+</div>
+
+          <div className="card">
+  <div className="section-header">
+    <div className="section-label">Text → Sign</div>
+  </div>
+
+  <input
+    type="text"
+    value={typedText}
+    onChange={(e) => setTypedText(e.target.value)}
+    onKeyDown={(e) => {
+      if (e.key === 'Enter') handleTextSubmit()
+    }}
+    placeholder="Type sentence..."
+    style={{
+      width: '100%',
+      padding: '10px',
+      borderRadius: '10px',
+      border: '1px solid #333',
+      background: '#0f172a',
+      color: '#fff'
+    }}
+  />
+
 </div>
 
           <div className="card" style={{ fontSize: '0.8rem', color: 'var(--text-dim)', lineHeight: 1.7 }}>
@@ -350,6 +439,69 @@ export default function TranslatorPage({ onAddHistory }: TranslatorPageProps) {
 
       {/* Hidden capture canvas */}
       <canvas ref={captureCanvasRef} style={{ display: 'none' }} />
+
+      {showPlayer && (
+  <div
+    style={{
+      position: 'fixed',
+      top: 0,
+      left: 0,
+      width: '100vw',
+      height: '100vh',
+      background: 'rgba(0,0,0,0.7)',
+      display: 'flex',
+      alignItems: 'center',
+      justifyContent: 'center',
+      zIndex: 9999
+    }}
+  >
+    <div
+      style={{
+        background: '#0f172a',
+        padding: '20px',
+        borderRadius: '16px',
+        width: '500px',
+        maxWidth: '90%'
+      }}
+    >
+      {/* Close button */}
+      <div style={{ textAlign: 'right' }}>
+       <button
+    onClick={() => {
+      setShowPlayer(false)
+      setPlayQueue([])
+      setCurrentPlayIndex(0)
+
+      if (videoPlayerRef.current) {
+        videoPlayerRef.current.pause()
+        videoPlayerRef.current.currentTime = 0
+      }
+    }}
+        >
+          ✕
+        </button>
+      </div>
+
+      {/* Video */}
+      <video
+        ref={videoPlayerRef}
+        onEnded={handleVideoEnd}
+        autoPlay
+        style={{
+          width: '100%',
+          borderRadius: '12px',
+          background: '#000'
+        }}
+      />
+
+      {/* Label */}
+      <div style={{ marginTop: 10, color: '#aaa', textAlign: 'center' }}>
+        Playing: {playQueue[currentPlayIndex]}
+      </div>
+    </div>
+  </div>
+)}
+
     </div>
   )
 }
