@@ -47,3 +47,13 @@ backend/.env
 
 #frontend env file
 frontend/.env
+
+# Ignore everything in data
+backend/data/*
+
+# BUT keep videos folder
+!backend/data/videos/
+
+# Keep only mp4 files inside videos
+backend/data/videos/*
+!backend/data/videos/*.mp4

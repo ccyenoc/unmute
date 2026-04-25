@@ -85,6 +85,7 @@ curl -X POST "http://localhost:8000/api/training/train-incremental?sign_class=A&
 
 ## Real-Time Detection
 
+<<<<<<< HEAD
 ### Emotion Predict API (Base64 or File)
 
 ```bash
@@ -102,6 +103,8 @@ curl -X POST "http://localhost:8000/api/emotion/predict" \
 
 Response fields: `emotion`, `confidence` (0-1), `face_detected`.
 
+=======
+>>>>>>> origin/brayden-frontend
 ### Test Detection (Image)
 
 ```bash

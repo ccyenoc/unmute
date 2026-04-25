@@ -7,12 +7,16 @@ Python FastAPI backend with MediaPipe for real-time sign language detection.
 - **Framework**: FastAPI
 - **Hand Detection**: MediaPipe (21 landmarks per hand)
 - **ML Model**: TensorFlow/Keras
+<<<<<<< HEAD
 - **Facial Emotion Detection**: DeepFace with FER fallback
+=======
+>>>>>>> origin/brayden-frontend
 - **Video Processing**: OpenCV
 - **API**: RESTful with CORS support
 
 ## Quick Start
 
+<<<<<<< HEAD
 ### Run Backend (Copy/Paste)
 
 From the project root:
@@ -67,6 +71,8 @@ The frontend client is already set up to try this route as a fallback.
 
 If you are running the Colab API locally, the frontend will also try port `8001` on the same host before falling back to the remote backend URL.
 
+=======
+>>>>>>> origin/brayden-frontend
 ### 1. Prerequisites
 
 - Python 3.8+
@@ -188,6 +194,7 @@ curl -X POST "http://localhost:8000/api/training/train-model?epochs=50&batch_siz
 #### GET `/api/training/dataset-info`
 View dataset statistics.
 
+<<<<<<< HEAD
 ### Facial Emotion
 
 #### POST `/api/emotion/predict`
@@ -343,6 +350,8 @@ You can fill later:
 - Real FER/FEN training loop + validation metrics endpoint
 - `POST /api/fusion/rules` (custom sign-emotion rule management)
 
+=======
+>>>>>>> origin/brayden-frontend
 ### History
 
 #### GET `/api/history/`

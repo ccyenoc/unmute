@@ -27,17 +27,21 @@ class FusionRequest(BaseModel):
 @router.post("/interpret")
 def interpret_fusion(payload: FusionRequest):
     normalized_emotion = payload.emotion.lower().strip()
-    expected = [item.lower().strip() for item in (payload.expected_emotions or []) if item]
 
-    status = "aligned"
-    message = "Emotion context is aligned with sign interpretation."
+    status = "interpreted"
+    message = f"User likely means: '{payload.sign}'"
 
+    # If emotion confidence is low → warn but still follow sign
     if payload.confidence is not None and payload.confidence < payload.confidence_threshold:
         status = "low_confidence"
-        message = "Emotion confidence is low. Ask user to retry or improve camera angle."
-    elif expected and normalized_emotion not in expected:
-        status = "mismatch"
-        message = "Emotion may not match expected context. Consider clarifying intent."
+        message += " (emotion confidence is low)"
+
+    # If emotion contradicts sign → add context instead of rejecting
+    elif payload.expected_emotions:
+        expected = [e.lower().strip() for e in payload.expected_emotions]
+        if normalized_emotion not in expected:
+            status = "context_adjusted"
+            message += f" (emotion '{normalized_emotion}' may indicate different tone)"
 
     return {
         "sign": payload.sign,
@@ -45,5 +49,4 @@ def interpret_fusion(payload: FusionRequest):
         "confidence": payload.confidence,
         "status": status,
         "message": message,
-        "expected_emotions": expected,
     }
