@@ -1,6 +1,6 @@
 import StatusIndicator from './StatusIndicator'
 
-type Page = 'translator' | 'history' | 'about'
+type Page = 'translator' | 'learn' | 'about'
 
 interface NavbarProps {
   page: Page
@@ -16,7 +16,7 @@ export default function Navbar({ page, onNav }: NavbarProps) {
       </a>
 
       <div className="navbar-nav">
-        {(['translator', 'history', 'about'] as Page[]).map(p => (
+        {(['translator', 'learn', 'about'] as Page[]).map(p => (
           <a
             key={p}
             href="#"
@@ -24,7 +24,7 @@ export default function Navbar({ page, onNav }: NavbarProps) {
             onClick={e => { e.preventDefault(); onNav(p) }}
           >
             {p === 'translator' && '🎥 Translate'}
-            {p === 'history' && '📋 History'}
+            {p === 'learn' && '🎓 Learn'}
             {p === 'about' && 'ℹ️ About'}
           </a>
         ))}

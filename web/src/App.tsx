@@ -1,10 +1,10 @@
 import { useState } from 'react'
 import Navbar from './components/Navbar'
-import TranslatorPage from './pages/TranslatorPage'
-import HistoryPage from './pages/HistoryPage'
 import AboutPage from './pages/AboutPage'
+import LearnPage from './pages/LearnPage'
+import TranslatorPage from './pages/TranslatorPage'
 
-type Page = 'translator' | 'history' | 'about'
+type Page = 'translator' | 'learn' | 'about'
 
 interface HistoryEntry {
   text: string
@@ -20,15 +20,21 @@ export default function App() {
     setHistory(prev => [...prev, entry])
   }
 
-  const clearHistory = () => setHistory([])
-
   return (
     <div className="app">
       <Navbar page={page} onNav={setPage} />
 
-      {page === 'translator' && <TranslatorPage onAddHistory={addHistory} />}
-      {page === 'history' && <HistoryPage history={history} onClear={clearHistory} />}
-      {page === 'about' && <AboutPage />}
+      {page === 'translator' && (
+        <TranslatorPage onAddHistory={addHistory} />
+      )}
+
+      {page === 'learn' && (
+        <LearnPage />
+      )}
+
+      {page === 'about' && (
+        <AboutPage />
+      )}
     </div>
   )
 }

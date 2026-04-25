@@ -131,6 +131,7 @@ while True:
                 row.extend([lm.x - base_x, lm.y - base_y])
 
             row = np.array(row).reshape(1, -1)
+            print("WEBCAM ROW:", row[0][:10])
 
             probs = model.predict_proba(row)
             confidence = np.max(probs)
