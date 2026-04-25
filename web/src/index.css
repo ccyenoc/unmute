@@ -681,3 +681,9 @@ p { color: var(--text-muted); }
 .mt-2 { margin-top: 8px; }
 .mt-3 { margin-top: 16px; }
 .mt-4 { margin-top: 24px; }
+
+.navbar-logo-icon img {
+  width: 36px;   /* 🔥 adjust this */
+  height: 36px;
+  object-fit: contain;
+}

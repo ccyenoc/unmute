@@ -50,9 +50,15 @@ const normalize = (word: string) =>
     )
   : []
 
+  const holdTimerRef = useRef<number | null>(null)
+const passedRef = useRef(false)
+
   const [currentWord, setCurrentWord] = useState('')
 const [confidence, setConfidence] = useState(0)
 const [emotion, setEmotion] = useState('')
+
+const [liveSentence, setLiveSentence] = useState('')
+const [status, setStatus] = useState<'idle' | 'correct' | 'wrong'>('idle')
 
   // ── Fetch signs ──
  useEffect(() => {
@@ -105,8 +111,39 @@ const [emotion, setEmotion] = useState('')
 
         const data = await res.json()
 
-        setCurrentWord(data.prediction ?? '')
-        setConfidence(data.confidence ?? 0)
+        const prediction = data.prediction ?? ''
+const conf = data.confidence ?? 0
+
+setCurrentWord(prediction)
+setConfidence(conf)
+
+const cleanPred = prediction.toLowerCase().replace(/\s/g, '')
+const target = current?.word.toLowerCase().replace(/\s/g, '')
+
+const isValid = prediction && conf >= 0.6
+
+if (!isValid) {
+  setStatus('idle')
+} else {
+  setLiveSentence(cleanPred)
+
+  if (cleanPred === target && conf > 0.6) {
+  if (!holdTimerRef.current && !passedRef.current) {
+    // ⏳ start delay (1.2s feels good)
+    holdTimerRef.current = window.setTimeout(() => {
+      passedRef.current = true
+
+      alert('✅ Correct!')
+      handlePracticeSuccess()
+      setShowCamera(false)
+
+      holdTimerRef.current = null
+    }, 1200)
+  }
+  } else {
+    setStatus('wrong')
+  }
+}
 
         // 🔥 EMOTION DETECTION
         const emoRes = await fetch('/api/emotion/predict', {
@@ -117,16 +154,6 @@ const [emotion, setEmotion] = useState('')
         if (emoRes.ok) {
           const emoData = await emoRes.json()
           setEmotion(emoData.emotion ?? '')
-        }
-
-        // ✅ AUTO PASS
-        if (
-          data.prediction === current?.word &&
-          data.confidence > 0.6
-        ) {
-          alert('✅ Correct!')
-          handlePracticeSuccess()
-          setShowCamera(false)
         }
 
       } catch (e) {
@@ -148,7 +175,11 @@ const [emotion, setEmotion] = useState('')
   const handlePracticeSuccess = async () => {
     if (!current) return
 
-    if (!progress.completedSigns.includes(current.word)) {
+    if (
+  !progress.completedSigns.some(
+    w => normalize(w) === normalize(current.word)
+  )
+) {
       const updated = {
         ...progress,
         points: progress.points + 10,
@@ -284,24 +315,40 @@ const [emotion, setEmotion] = useState('')
     <h3>📘 Day {selectedDay} Practice</h3>
 
     <div style={{ display: 'flex', flexWrap: 'wrap', gap: 10 }}>
-      {daySigns.map(sign => (
-        <button
-          key={sign.id}
-          onClick={() => {
-            setShowCamera(true)
-            setCurrent(sign)}}
-          style={{
-            padding: '8px 12px',
-            borderRadius: '8px',
-            border: '1px solid #333',
-            background: '#0f172a',
-            color: '#fff',
-            cursor: 'pointer'
-          }}
-        >
-          {sign.word}
-        </button>
-      ))}
+      {daySigns.map(sign => {
+  const done = progress.completedSigns.some(
+    w => normalize(w) === normalize(sign.word)
+  )
+
+  return (
+    <button
+      key={sign.id}
+      onClick={() => {
+        if (!done) {
+          setShowCamera(true)
+          setCurrent(sign)
+          passedRef.current = false
+
+          if (holdTimerRef.current) {
+            clearTimeout(holdTimerRef.current)
+            holdTimerRef.current = null
+          }
+        }
+      }}
+      style={{
+        padding: '8px 12px',
+        borderRadius: '8px',
+        border: '1px solid #333',
+        background: done ? '#065f46' : '#0f172a',
+        color: '#fff',
+        cursor: done ? 'default' : 'pointer',
+        opacity: done ? 0.7 : 1
+      }}
+    >
+      {done ? '✅ ' : ''}{sign.word}
+    </button>
+  )
+})}
     </div>
   </div>
 )}
@@ -311,28 +358,38 @@ const [emotion, setEmotion] = useState('')
         <h3>🎯 Practice Signs</h3>
 
         <div style={{ display: 'flex', flexWrap: 'wrap', gap: 10 }}>
-          {filteredSigns.map(sign => (
-            <button
-              key={sign.id}
-              onClick={() => {
-                setShowCamera(true)
-                setCurrent(sign)}}
-              style={{
-                padding: '8px 12px',
-                borderRadius: '8px',
-                border: '1px solid #333',
-                background: '#0f172a',
-                color: '#fff',
-                cursor: 'pointer'
-              }}
-            >
-              {sign.word}
-            </button>
-          ))}
+          {filteredSigns.map(sign => {
+  const done = progress.completedSigns.some(
+    w => normalize(w) === normalize(sign.word)
+  )
+
+  return (
+    <button
+      key={sign.id}
+      onClick={() => {
+        if (!done) {
+          setShowCamera(true)
+          setCurrent(sign)
+        }
+      }}
+      style={{
+        padding: '8px 12px',
+        borderRadius: '8px',
+        border: '1px solid #333',
+        background: done ? '#065f46' : '#0f172a',
+        color: '#fff',
+        cursor: done ? 'default' : 'pointer',
+        opacity: done ? 0.7 : 1
+      }}
+    >
+      {done ? '✅ ' : ''}{sign.word}
+    </button>
+  )
+})}
         </div>
       </div>
 
-     {/* ── CAMERA PANEL ── */}
+{/* ── CAMERA PANEL ── */}
 {showCamera && (
   <div
     style={{
@@ -354,63 +411,139 @@ const [emotion, setEmotion] = useState('')
         padding: '20px',
         borderRadius: '16px',
         width: '900px',
-        maxWidth: '95%',
-        display: 'flex',
-        gap: '20px'
+        maxWidth: '95%'
       }}
     >
-      {/* LEFT: VIDEO */}
-      <div style={{ flex: 1 }}>
-        <h3 style={{ marginBottom: 10 }}>{current?.word}</h3>
-
-        <video
-          src={current?.videoUrl}
-          controls
-          style={{
-            width: '100%',
-            borderRadius: '12px',
-            background: '#000'
-          }}
-        />
+      {/* 🔥 TITLE + CLOSE (TOP RIGHT OPTIONAL) */}
+      <div
+        style={{
+          display: 'flex',
+          justifyContent: 'space-between',
+          marginBottom: 10
+        }}
+      >
+        <h3>Practice: {current?.word}</h3>
       </div>
 
-      {/* RIGHT: CAMERA */}
-      <div style={{ flex: 1 }}>
-        <video
-          ref={videoRef}
-          autoPlay
-          playsInline
-          muted
-          style={{
-            width: '100%',
-            borderRadius: '12px',
-            background: '#000'
-          }}
-        />
-
-        <div style={{ marginTop: 10 }}>
-          <div>Prediction: {currentWord}</div>
-          <div>
-            Confidence: {(confidence * 100).toFixed(1)}%
-          </div>
-          <div>Emotion: {emotion || '...'}</div>
+      {/* 🔥 MAIN CONTENT */}
+      <div
+        style={{
+          display: 'flex',
+          gap: '20px'
+        }}
+      >
+        {/* LEFT: VIDEO */}
+        <div className="justify-content-center"
+        style={{ flex: 1 }}>
+          <video
+            src={current?.videoUrl}
+            controls
+            style={{
+              width: '100%',
+              borderRadius: '12px',
+              background: '#000'
+            }}
+          />
         </div>
 
-        <button
-          onClick={() => setShowCamera(false)}
-          style={{
-            marginTop: 10,
-            width: '100%',
-            padding: '10px',
-            borderRadius: '10px',
-            background: '#1e293b',
-            color: '#fff',
-            border: 'none'
-          }}
-        >
-          Close
-        </button>
+        {/* RIGHT: CAMERA */}
+        <div style={{ flex: 1 }}>
+          <video
+            ref={videoRef}
+            autoPlay
+            playsInline
+            muted
+            style={{
+              width: '100%',
+              borderRadius: '12px',
+              background: '#000'
+            }}
+          />
+
+          <div style={{ marginTop: 10 }}>
+            {/* TARGET */}
+            <div style={{ fontSize: '0.9rem', color: '#aaa' }}>
+              Target: <b>{current?.word}</b>
+            </div>
+
+            {/* PREDICTION */}
+            <div style={{ marginTop: 6 }}>
+              Prediction: <b>{currentWord || '...'}</b>
+            </div>
+
+            {/* STATUS */}
+            <div
+              style={{
+                marginTop: 6,
+                fontWeight: 'bold',
+                color:
+                  status === 'correct'
+                    ? '#22c55e'
+                    : status === 'wrong'
+                    ? '#ef4444'
+                    : '#aaa'
+              }}
+            >
+              {status === 'correct' && '✅ Match'}
+              {status === 'wrong' && '❌ Not Match'}
+              {status === 'idle' && 'Waiting...'}
+            </div>
+
+            {/* CONFIDENCE BAR */}
+            <div
+              style={{
+                height: 8,
+                background: '#1e293b',
+                borderRadius: 6,
+                marginTop: 8,
+                overflow: 'hidden'
+              }}
+            >
+              <div
+                style={{
+                  width: `${confidence * 100}%`,
+                  height: '100%',
+                  background:
+                    confidence > 0.6 ? '#22c55e' : '#ef4444',
+                  transition: '0.2s'
+                }}
+              />
+            </div>
+
+            <div style={{ fontSize: '0.8rem', marginTop: 4 }}>
+              {(confidence * 100).toFixed(1)}%
+            </div>
+
+            {/* EMOTION */}
+            <div style={{ marginTop: 8 }}>
+              Emotion: <b>{emotion || '...'}</b>
+            </div>
+
+            {/* LIVE SENTENCE */}
+            <div style={{ marginTop: 10, fontSize: '0.85rem', color: '#aaa' }}>
+              Live: {liveSentence || '...'}
+            </div>
+          </div>
+        </div>
       </div>
+
+      {/* 🔥 GLOBAL CLOSE BUTTON (CENTERED) */}
+      <button
+        onClick={() => setShowCamera(false)}
+        style={{
+          marginTop: 20,
+          width: '100%',
+          padding: '12px',
+          borderRadius: '12px',
+          background: '#1e293b',
+          color: '#fff',
+          border: 'none',
+          fontWeight: 'bold',
+          cursor: 'pointer'
+        }}
+      >
+        Close
+      </button>
     </div>
   </div>
 )}

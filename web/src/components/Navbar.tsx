@@ -11,7 +11,9 @@ export default function Navbar({ page, onNav }: NavbarProps) {
   return (
     <nav className="navbar">
       <a className="navbar-logo" href="#" onClick={e => { e.preventDefault(); onNav('translator') }}>
-        <div className="navbar-logo-icon">🤟</div>
+        <div className="navbar-logo-icon">
+  <img src="/logo.png" alt="logo" />
+</div>
         <span className="navbar-logo-text">Unmute</span>
       </a>
 

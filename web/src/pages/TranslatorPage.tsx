@@ -202,15 +202,13 @@ const handleVideoEnd = () => {
     valid.forEach(p => { counts[p] = (counts[p] || 0) + 1 })
     const finalPred = Object.keys(counts).reduce((a, b) => counts[a] > counts[b] ? a : b)
     const freq = counts[finalPred] / valid.length
-
-    if (finalPred !== lastWord.current) {
-      setCurrentWord(finalPred)
-      setConfidence(conf)
-      lastWord.current = finalPred
-    }
-
-    if (cooldownRef.current > 0) { cooldownRef.current--; return }
+    if (cooldownRef.current > 0) { cooldownRef.current--; }
     if (freq < 0.4) return
+    if (finalPred === lastWord.current) return
+
+lastWord.current = finalPred
+setCurrentWord(finalPred)
+setConfidence(conf)
 
     // Direct phrase
     if (DIRECT_PHRASES[finalPred]) {
@@ -226,8 +224,15 @@ const handleVideoEnd = () => {
 
     // Word buffer combos
     if (wordBufferRef.current.length === 0) {
-      wordBufferRef.current.push(finalPred)
-      setWordBuffer([...wordBufferRef.current])
+      const prevWord = wordBufferRef.current[wordBufferRef.current.length - 1]
+
+// 🚫 prevent duplicate words
+if (prevWord !== finalPred) {
+  wordBufferRef.current.push(finalPred)
+  setWordBuffer([...wordBufferRef.current])
+  setSentence(prev => (prev + ' ' + finalPred).trim())
+}
+    
     } else {
       const prev = wordBufferRef.current[wordBufferRef.current.length - 1]
       let composed: string | null = null
@@ -239,14 +244,21 @@ const handleVideoEnd = () => {
       if (composed) {
         phrasesRef.current.push({ text: composed, timer: PHRASE_DURATION_TICKS })
         onAddHistory({ text: composed, timestamp: Date.now(), type: 'phrase' })
+        setSentence(prev => (prev + ' ' + composed).trim())
         wordBufferRef.current = []
         setWordBuffer([])
       } else {
-        wordBufferRef.current.push(finalPred)
-        setWordBuffer([...wordBufferRef.current])
+        const prevWord = wordBufferRef.current[wordBufferRef.current.length - 1]
+
+// 🚫 prevent duplicate words
+if (prevWord !== finalPred) {
+  wordBufferRef.current.push(finalPred)
+  setWordBuffer([...wordBufferRef.current])
+  setSentence(prev => (prev + ' ' + finalPred).trim())
+}
       }
     }
-    cooldownRef.current = 15
+    cooldownRef.current = 5
   }, [onAddHistory])
 
   // ── Frame capture + send loop ─────────────────────────────────
@@ -351,7 +363,7 @@ const handleVideoEnd = () => {
                   landmarks={landmarks}
                   width={panelSize.width}
                   height={panelSize.height}
-                  mirrored={true}
+                  mirrored={false}
                 />
               )}
               <div className="webcam-overlay-badge">
