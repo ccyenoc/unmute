@@ -1,6 +1,6 @@
 **Unmute — INTELLIGENT SIGN LANGUAGE INTERPRETATION SYSTEM**
 
-<img width="500" height="500" alt="ChatGPT_Image_Apr_25__2026__03_36_20_PM-removebg-preview" src="https://github.com/user-attachments/assets/ac6d0e0b-c818-4578-a4f6-5f387a0f97b4" />
+<img width="1254" height="1254" alt="ChatGPT Image Apr 25, 2026, 03_36_20 PM" src="https://github.com/user-attachments/assets/b84d92fa-5113-4bfb-9b6b-aad43dcdef87" />
 
 Unmute is an AI-powered web platform that enables real-time sign language translation and interactive learning. It combines computer vision, machine learning, and gamification to improve communication and make sign language learning engaging.
 
