@@ -57,7 +57,8 @@ uvicorn app:app --host 0.0.0.0 --port 8000 --reload
 2. Better ML accuracy
 3. Multiplayer / social features
 4. Mobile version
-🤝 Contributors
+   
+**🤝 Contributors**
 Mentor : DR. HEMA A/P SUBRAMANIAM
 Teammate :
 1. Chin Yiu Ern
