@@ -35,6 +35,8 @@ export default function App() {
       {page === 'about' && (
         <AboutPage />
       )}
+
+      
     </div>
   )
 }

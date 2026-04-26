@@ -1,16 +1,21 @@
+import { onAuthStateChanged, signOut } from 'firebase/auth'
 import {
+  collection,
   doc,
+  getDoc,
+  getDocs,
   updateDoc
 } from 'firebase/firestore'
 import { useEffect, useRef, useState } from 'react'
-import { db } from '../firebase'
-
-
+import AuthModal from '../components/AuthModel'
+import { auth, db } from '../firebase'
 
 interface SignItem {
   id: string
   word: string
   videoUrl: string
+  day: number
+  xp?: number
 }
 
 interface UserProgress {
@@ -20,6 +25,43 @@ interface UserProgress {
 }
 
 export default function LearnPage() {
+  useEffect(() => {
+  const loadSigns = async () => {
+    const snap = await getDocs(collection(db, 'signs'))
+
+    const data = snap.docs.map(doc => ({
+      id: doc.id,
+      ...doc.data()
+    })) as SignItem[]
+
+    setSigns(data)
+  }
+
+  loadSigns()
+}, [])
+
+  const [user, setUser] = useState<any>(null)
+  useEffect(() => {
+  const unsub = onAuthStateChanged(auth, (u) => {
+    setUser(u)
+    console.log("LOGGED USER:", u)
+  })
+
+  return () => unsub()
+}, [])
+
+const handleLogout = async () => {
+  try {
+    await signOut(auth)
+    console.log("Logged out")
+  } catch (e) {
+    console.error("Logout error:", e)
+  }
+}
+
+const [showHistory, setShowHistory] = useState(false)
+const [historySearch, setHistorySearch] = useState('')
+
   const dayMap: Record<number, string[]> = {
   1: ['hi', 'bye', 'thankyou', 'sorry'],
   2: ['hungry', 'tired', 'help'],
@@ -32,23 +74,17 @@ const normalize = (word: string) =>
   const videoRef = useRef<HTMLVideoElement>(null)
   const [signs, setSigns] = useState<SignItem[]>([])
   const [current, setCurrent] = useState<SignItem | null>(null)
-  const [progress, setProgress] = useState<UserProgress>({
-    points: 30, // 🔥 DEMO DATA (looks nicer)
-    streak: 3,
-    completedSigns: ['hi', 'thankyou']
-  })
+ const [progress, setProgress] = useState<UserProgress>({
+  points: 0,
+  streak: 0,
+  completedSigns: []
+})
   const [search, setSearch] = useState('')
+  const [showAuth, setShowAuth] = useState(false)
 
-  const userId = 'demoUser'
-  const [selectedDay, setSelectedDay] = useState<number | null>(null)
+  const userId = user?.uid
+  const [currentDay, setCurrentDay] = useState(1)
   const [showCamera, setShowCamera] = useState(false)
-  const daySigns = selectedDay
-  ? signs.filter(s =>
-      dayMap[selectedDay]?.some(
-        w => normalize(w) === normalize(s.word)
-      )
-    )
-  : []
 
   const holdTimerRef = useRef<number | null>(null)
 const passedRef = useRef(false)
@@ -60,17 +96,6 @@ const [emotion, setEmotion] = useState('')
 const [liveSentence, setLiveSentence] = useState('')
 const [status, setStatus] = useState<'idle' | 'correct' | 'wrong'>('idle')
 
-  // ── Fetch signs ──
- useEffect(() => {
-  setSigns([
-    { id: '1', word: 'hi', videoUrl: '/videos/hi.mp4' },
-    { id: '2', word: 'bye', videoUrl: '/videos/bye.mp4' },
-    { id: '3', word: 'thank you', videoUrl: '/videos/thank_you.mp4' },
-    { id: '4', word: 'sorry', videoUrl: '/videos/sorry.mp4' },
-    { id: '5', word: 'hungry', videoUrl: '/videos/hungry.mp4' },
-    { id: '6', word: 'help', videoUrl: '/videos/help.mp4' }
-  ])
-}, [])
 
   useEffect(() => {
   if (!showCamera) return
@@ -182,12 +207,13 @@ if (!isValid) {
 ) {
       const updated = {
         ...progress,
-        points: progress.points + 10,
+        points: progress.points + (current?.xp || 10),
         completedSigns: [...progress.completedSigns, current.word]
       }
 
       setProgress(updated)
-      await updateDoc(doc(db, 'users', userId), updated)
+      if (!userId) return
+await updateDoc(doc(db, 'users', userId), updated)
       alert('✅ +10 XP!')
     }
   }
@@ -201,17 +227,101 @@ if (!isValid) {
     s.word.toLowerCase().includes(search.toLowerCase())
   )
 
+  const daySigns = signs.filter(s => Number(s.day) === currentDay)
+
+
+useEffect(() => {
+  if (!user) return
+
+  const loadUser = async () => {
+    const snap = await getDoc(doc(db, 'users', user.uid))
+
+    if (snap.exists()) {
+      setProgress(snap.data() as UserProgress)
+    }
+  }
+
+  loadUser()
+}, [user])
+
   return (
     <div className="page">
-      <h1>Learn Sign Language</h1>
+     <div
+  style={{
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginBottom: '10px'
+  }}
+>
+  <h1 style={{ margin: 0 }}>Learn Sign Language</h1>
+
+  {user ? (
+  <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+    
+    {/* Avatar */}
+    <div
+      style={{
+        width: 36,
+        height: 36,
+        borderRadius: '50%',
+        background: '#22c55e',
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+        fontWeight: 'bold'
+      }}
+    >
+      {user.email?.charAt(0).toUpperCase()}
+    </div>
+
+    {/* Email */}
+    <span style={{ fontSize: '0.9rem' }}>
+      {user.email}
+    </span>
+
+    {/* Logout */}
+    <button
+      onClick={() => signOut(auth)}
+      style={{
+        background: '#1e293b',
+        color: '#fff',
+        border: 'none',
+        padding: '6px 10px',
+        borderRadius: '8px',
+        cursor: 'pointer'
+      }}
+    >
+      Logout
+    </button>
+  </div>
+) : (
+  <button
+    onClick={() => setShowAuth(true)}
+    style={{
+      background: '#22c55e',
+      color: '#fff',
+      padding: '8px 16px',
+      borderRadius: '10px',
+      border: 'none',
+      fontWeight: 'bold',
+      cursor: 'pointer'
+    }}
+  >
+    🔐 Login to save progress
+  </button>
+)}
+
+</div>
 
       {/* ── SEARCH BAR ── */}
-      <div className="card" style={{ marginBottom: 20 }}>
         <input
           placeholder="🔍 Search signs..."
           value={search}
           onChange={(e) => setSearch(e.target.value)}
           style={{
+            marginBottom : "20px",
+            marginTop : "10px",
             width: '100%',
             padding: '10px',
             borderRadius: '10px',
@@ -220,170 +330,241 @@ if (!isValid) {
             color: '#fff'
           }}
         />
-      </div>
 
       {/* ── STATS ── */}
       <div
-        style={{
-          display: 'grid',
-          gridTemplateColumns: 'repeat(4, 1fr)',
-          gap: 16,
-          marginBottom: 20
-        }}
-      >
-        <div className="card" style={{ textAlign: 'center' }}>
-          ✨ <br /> {progress.points} XP
-        </div>
-        <div className="card" style={{ textAlign: 'center' }}>
-          🎯 <br /> Level {Math.floor(progress.points / 50) + 1}
-        </div>
-        <div className="card" style={{ textAlign: 'center' }}>
-          🔥 <br /> {progress.streak} days
-        </div>
-        <div className="card" style={{ textAlign: 'center' }}>
-          🏆 <br /> {Math.floor(progress.completedSigns.length / 2)} badges
-        </div>
-      </div>
-
-      {/* ── LEARNING PATH ── */}
-      <div className="card" style={{ marginBottom: 20 }}>
-        <h3>📅 Learning Path</h3>
-
-        {/* DAY 1 */}
-        <div
-          onClick={() => {
-            console.log('clicked day 1')
-            setSelectedDay(1)}}
-          style={{
-            padding: '12px',
-            marginTop: 10,
-            borderRadius: '10px',
-            background: '#1e293b',
-            cursor: 'pointer'
-          }}
-        >
-          🔓 Day 1 — Basics  
-          <div style={{ fontSize: '0.8rem', color: '#aaa' }}>
-            hi • bye • thank you • sorry
-          </div>
-        </div>
-
-        {/* DAY 2 */}
-        <div
-          onClick={() => {
-    if (day2Unlocked) setSelectedDay(2)
+  style={{
+    display: 'grid',
+    gridTemplateColumns: 'repeat(4, 1fr)',
+    gap: 16,
+    marginBottom: 20
   }}
-          style={{
-            padding: '12px',
-            marginTop: 10,
-            borderRadius: '10px',
-            background: day2Unlocked ? '#1e293b' : '#111',
-            opacity: day2Unlocked ? 1 : 0.4
-          }}
-        >
-          {day2Unlocked ? '🔓' : '🔒'} Day 2 — Needs  
-          <div style={{ fontSize: '0.8rem', color: '#aaa' }}>
-            hungry • tired • help
-          </div>
-        </div>
+>
+  {/* 🎯 LEVEL + XP */}
+  {(() => {
+    const xpForNextLevel = 50
+    const level = Math.floor(progress.points / xpForNextLevel) + 1
+    const currentXp = progress.points % xpForNextLevel
+    const percent = (currentXp / xpForNextLevel) * 100
 
-        {/* DAY 3 */}
-        <div
-          onClick={() => {
-    if (day3Unlocked) setSelectedDay(3)
-  }}
-          style={{
-            padding: '12px',
-            marginTop: 10,
-            borderRadius: '10px',
-            background: day3Unlocked ? '#1e293b' : '#111',
-            opacity: day3Unlocked ? 1 : 0.4
-          }}
-        >
-          {day3Unlocked ? '🔓' : '🔒'} Day 3 — Responses  
-          <div style={{ fontSize: '0.8rem', color: '#aaa' }}>
-            yes • no • sure
-          </div>
-        </div>
+    return (
+     <div className="card" style={{ padding: 18 }}>
+  <div style={{ fontSize: '0.8rem', color: '#94a3b8' }}>
+    🎯 Level Progress
+  </div>
 
-      
-      </div>
+  <div style={{ fontSize: '0.85rem', color: '#64748b', marginTop: 2 }}>
+    XP towards next level
+  </div>
 
-      {selectedDay && (
-        
-  <div className="card" style={{ marginTop: 20 }}>
-    <h3>📘 Day {selectedDay} Practice</h3>
+  <div style={{ fontSize: '1.8rem', fontWeight: 'bold', marginTop: 10 }}>
+    Level {level}
+  </div>
 
-    <div style={{ display: 'flex', flexWrap: 'wrap', gap: 10 }}>
-      {daySigns.map(sign => {
-  const done = progress.completedSigns.some(
-    w => normalize(w) === normalize(sign.word)
-  )
+  <div style={{ fontSize: '0.85rem', color: '#94a3b8', marginTop: 4 }}>
+    ✨ {currentXp} / {xpForNextLevel} XP
+  </div>
 
-  return (
-    <button
-      key={sign.id}
-      onClick={() => {
-        if (!done) {
-          setShowCamera(true)
-          setCurrent(sign)
-          passedRef.current = false
-
-          if (holdTimerRef.current) {
-            clearTimeout(holdTimerRef.current)
-            holdTimerRef.current = null
-          }
-        }
-      }}
+  <div
+    style={{
+      height: 6,
+      background: '#1e293b',
+      borderRadius: 6,
+      marginTop: 10,
+      overflow: 'hidden'
+    }}
+  >
+    <div
       style={{
+        width: `${percent}%`,
+        height: '100%',
+        background: 'linear-gradient(90deg, #22c55e, #4ade80)'
+      }}
+    />
+  </div>
+
+  <div style={{ fontSize: '0.75rem', color: '#64748b', marginTop: 6 }}>
+    🚀 {xpForNextLevel - currentXp} XP to level up
+  </div>
+</div>
+    )
+  })()}
+
+  {/* 🏆 BADGES */}
+  <div className="card" style={{ padding: 18 }}>
+  <div style={{ fontSize: '0.8rem', color: '#94a3b8' }}>
+    🏆 Achievements
+  </div>
+
+  <div style={{ fontSize: '0.85rem', color: '#64748b', marginTop: 2 }}>
+    Badges collected
+  </div>
+
+  <div style={{ fontSize: '2rem', fontWeight: 'bold', marginTop: 14 }}>
+    {Math.floor(progress.completedSigns.length / 2)}
+  </div>
+
+  <div style={{ fontSize: '0.75rem', color: '#64748b', marginTop: 4 }}>
+    🎉 Keep going!
+  </div>
+</div>
+
+  {/* 🔥 STREAK */}
+  <div className="card" style={{ padding: 18 }}>
+  <div style={{ fontSize: '0.8rem', color: '#94a3b8' }}>
+    🔥 Activity Streak
+  </div>
+
+  <div style={{ fontSize: '0.85rem', color: '#64748b', marginTop: 2 }}>
+    Daily consistency
+  </div>
+
+  <div style={{ fontSize: '2rem', fontWeight: 'bold', marginTop: 14 }}>
+    {progress.streak}
+  </div>
+
+  <div style={{ fontSize: '0.75rem', color: '#64748b', marginTop: 4 }}>
+    ⚡ Best: {progress.streak} days
+  </div>
+</div>
+
+  {/* 📜 HISTORY (CLICKABLE) */}
+ <div
+  className="card"
+  onClick={() => setShowHistory(true)}
+  style={{
+    padding: 18,
+    cursor: 'pointer'
+  }}
+>
+  <div style={{ fontSize: '0.8rem', color: '#94a3b8' }}>
+    📜 Learning History
+  </div>
+
+  <div style={{ fontSize: '0.85rem', color: '#64748b', marginTop: 2 }}>
+    Words you've mastered
+  </div>
+
+  <div style={{ fontSize: '1.6rem', marginTop: 14 }}>
+    👀
+  </div>
+
+  <div style={{ fontSize: '0.75rem', color: '#64748b', marginTop: 4 }}>
+    Click to explore
+  </div>
+</div>
+</div>
+
+     <div className="card" style={{ marginBottom: 20 }}>
+  <h3>📅 Learning Path</h3>
+
+  {/* 🔥 DAY NAVIGATION */}
+  <div
+    style={{
+      display: 'flex',
+      justifyContent: 'space-between',
+      alignItems: 'center',
+      marginTop: 10
+    }}
+  >
+    <button
+      onClick={() => setCurrentDay(prev => Math.max(1, prev - 1))}
+      style={{
+        background: '#1e293b',
+        border: 'none',
+        color: '#fff',
         padding: '8px 12px',
         borderRadius: '8px',
-        border: '1px solid #333',
-        background: done ? '#065f46' : '#0f172a',
-        color: '#fff',
-        cursor: done ? 'default' : 'pointer',
-        opacity: done ? 0.7 : 1
+        cursor: 'pointer'
       }}
     >
-      {done ? '✅ ' : ''}{sign.word}
+      ←
     </button>
-  )
-})}
+
+    <div style={{ fontWeight: 'bold' }}>
+      Day {currentDay} — {
+        currentDay === 1 ? 'Basics' :
+        currentDay === 2 ? 'Needs' :
+        'Responses'
+      }
     </div>
+
+    <button
+      onClick={() => setCurrentDay(prev => Math.min(3, prev + 1))}
+      style={{
+        background: '#1e293b',
+        border: 'none',
+        color: '#fff',
+        padding: '8px 12px',
+        borderRadius: '8px',
+        cursor: 'pointer'
+      }}
+    >
+      →
+    </button>
+
   </div>
-)}
+</div>
+
 
       {/* ── SEARCH RESULTS / SIGN LIST ── */}
       <div className="card">
         <h3>🎯 Practice Signs</h3>
 
-        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 10 }}>
-          {filteredSigns.map(sign => {
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+          {daySigns.map(sign => {
   const done = progress.completedSigns.some(
     w => normalize(w) === normalize(sign.word)
   )
 
   return (
-    <button
-      key={sign.id}
-      onClick={() => {
-        if (!done) {
-          setShowCamera(true)
-          setCurrent(sign)
-        }
-      }}
-      style={{
-        padding: '8px 12px',
-        borderRadius: '8px',
-        border: '1px solid #333',
-        background: done ? '#065f46' : '#0f172a',
-        color: '#fff',
-        cursor: done ? 'default' : 'pointer',
-        opacity: done ? 0.7 : 1
-      }}
-    >
-      {done ? '✅ ' : ''}{sign.word}
-    </button>
+    <div
+  key={sign.id}
+  onClick={() => {
+      setShowCamera(true)
+      setCurrent(sign)
+  }}
+  style={{
+    display: 'flex',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    padding: '14px 18px',
+    borderRadius: '12px',
+    background: done ? '#065f46' : '#0f172a',
+    border: '1px solid #1e293b',
+    cursor: done ? 'default' : 'pointer',
+    transition: '0.2s'
+  }}
+>
+  {/* LEFT SIDE */}
+  <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+    <span style={{ fontSize: '1.1rem' }}>
+      {done ? '✅' : '○'}
+    </span>
+    <span style={{ fontSize: '1rem' }}>
+      {sign.word}
+    </span>
+  </div>
+
+  {/* RIGHT SIDE */}
+  <div style={{ display: 'flex', gap: 20, fontSize: '0.9rem' }}>
+    
+    {/* Accuracy */}
+    <span style={{ color: '#aaa' }}>
+      {done ? '85%' : '--'}
+    </span>
+
+    {/* Difficulty */}
+    <span style={{ color: '#22c55e' }}>
+      Easy
+    </span>
+
+    {/* Lock */}
+    <span>
+      {done ? '🔓' : '🔒'}
+    </span>
+  </div>
+</div>
   )
 })}
         </div>
@@ -434,7 +615,8 @@ if (!isValid) {
       >
         {/* LEFT: VIDEO */}
         <div className="justify-content-center"
-        style={{ flex: 1 }}>
+        style={{ 
+          flex: 1 }}>
           <video
             src={current?.videoUrl}
             controls
@@ -539,6 +721,99 @@ if (!isValid) {
           color: '#fff',
           border: 'none',
           fontWeight: 'bold',
+          cursor: 'pointer'
+        }}
+      >
+        Close
+      </button>
+    </div>
+  </div>
+)}
+{showAuth && <AuthModal onClose={() => setShowAuth(false)} />}
+
+  {showHistory && (
+  <div
+    style={{
+      position: 'fixed',
+      top: 0,
+      left: 0,
+      width: '100vw',
+      height: '100vh',
+      background: 'rgba(0,0,0,0.7)',
+      display: 'flex',
+      alignItems: 'center',
+      justifyContent: 'center',
+      zIndex: 9999
+    }}
+  >
+    <div
+      style={{
+        background: '#0f172a',
+        padding: 20,
+        borderRadius: 16,
+        width: '600px',
+        maxWidth: '95%'
+      }}
+    >
+      <h3>📜 Learning History</h3>
+
+      {/* 🔍 SEARCH */}
+      <input
+        placeholder="Search history..."
+        value={historySearch}
+        onChange={(e) => setHistorySearch(e.target.value)}
+        style={{
+          width: '100%',
+          padding: '10px',
+          borderRadius: '10px',
+          marginTop: 10,
+          background: '#020617',
+          border: '1px solid #333',
+          color: '#fff'
+        }}
+      />
+
+      {/* 🔥 HORIZONTAL SCROLL */}
+      <div
+        style={{
+          display: 'flex',
+          gap: 10,
+          overflowX: 'auto',
+          marginTop: 15,
+          paddingBottom: 10
+        }}
+      >
+        {progress.completedSigns
+          .filter(word =>
+            word.toLowerCase().includes(historySearch.toLowerCase())
+          )
+          .map((word, i) => (
+            <div
+              key={i}
+              style={{
+                padding: '8px 14px',
+                borderRadius: '20px',
+                background: '#1e293b',
+                whiteSpace: 'nowrap',
+                fontSize: '0.85rem'
+              }}
+            >
+              ✅ {word}
+            </div>
+          ))}
+      </div>
+
+      {/* CLOSE */}
+      <button
+        onClick={() => setShowHistory(false)}
+        style={{
+          marginTop: 15,
+          width: '100%',
+          padding: '10px',
+          borderRadius: '10px',
+          background: '#1e293b',
+          color: '#fff',
+          border: 'none',
           cursor: 'pointer'
         }}
       >
